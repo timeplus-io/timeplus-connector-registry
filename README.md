@@ -98,9 +98,8 @@ curl -X POST "http://localhost:8000/api/v1/register" \
 Response:
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIs...",
-  "token_type": "bearer"
-}
+  "access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0aW1lcGx1cyIsImV4cCI6MTc2OTIxNjg3Nn0.AM9duB3EW03lOkYMF5qZnoux5Kf15NL7iIBTP-eq0D4",
+  "token_type":"bearer"}
 ```
 
 ### Login
@@ -109,8 +108,8 @@ Response:
 curl -X POST "http://localhost:8000/api/v1/login" \
   -H "Content-Type: application/json" \
   -d '{
-    "namespace": "mycompany",
-    "password": "securepassword123"
+    "namespace": "timeplus",
+    "password": "Password!"
   }'
 ```
 
