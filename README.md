@@ -120,7 +120,7 @@ curl -X POST "http://localhost:8000/api/v1/login" \
 curl -X POST "http://localhost:8000/api/v1/connectors" \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/x-yaml" \
-  -d @samples/kafka-json-reader.yaml
+  --data-binary @samples/kafka-json-reader.yaml
 ```
 
 ### Search Connectors
