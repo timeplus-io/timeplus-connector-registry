@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timeplus Connector Registry</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+        }
+        .transition-all {
+            transition: all 0.2s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        // API Configuration
+        const API_BASE = 'http://localhost:8000/api/v1';
+
+        // Category badge colors
+        const categoryColors = {
+            source: 'bg-green-100 text-green-800',
+            sink: 'bg-blue-100 text-blue-800',
+            bidirectional: 'bg-purple-100 text-purple-800',
+        };
+
+        const categoryIcons = {
+            source: '📥',
+            sink: '📤',
+            bidirectional: '🔄',
+        };
+
+        // Header Component
+        function Header({ onSearch, searchQuery }) {
+            return (
+                <header className="gradient-bg text-white shadow-lg">
+                    <div className="max-w-7xl mx-auto px-4 py-8">
+                        <div className="flex items-center justify-between mb-6">
+                            <div>
+                                <h1 className="text-3xl font-bold flex items-center gap-3">
+                                    <span className="text-4xl">⚡</span>
+                                    Timeplus Connector Registry
+                                </h1>
+                                <p className="mt-2 text-purple-100">
+                                    Discover and install Custom Table Function connectors
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <a 
+                                    href="http://localhost:8000/docs" 
+                                    target="_blank"
+                                    className="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-all"
+                                >
+                                    API Docs
+                                </a>
+                            </div>
+                        </div>
+                        
+                        <div className="relative max-w-2xl">
+                            <input
+                                type="text"
+                                placeholder="Search connectors... (e.g., kafka, http, database)"
+                                value={searchQuery}
+                                onChange={(e) => onSearch(e.target.value)}
+                                className="w-full px-5 py-4 pr-12 rounded-xl text-gray-800 placeholder-gray-400 shadow-lg focus:outline-none focus:ring-4 focus:ring-white/30"
+                            />
+                            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 text-xl">
+                                🔍
+                            </span>
+                        </div>
+                    </div>
+                </header>
+            );
+        }
+
+        // Category Filter Component
+        function CategoryFilter({ selectedCategory, onSelectCategory, stats }) {
+            const categories = [
+                { key: null, label: 'All', icon: '📦' },
+                { key: 'source', label: 'Sources', icon: '📥' },
+                { key: 'sink', label: 'Sinks', icon: '📤' },
+                { key: 'bidirectional', label: 'Bidirectional', icon: '🔄' },
+            ];
+
+            return (
+                <div className="flex flex-wrap gap-3 mb-6">
+                    {categories.map(({ key, label, icon }) => (
+                        <button
+                            key={label}
+                            onClick={() => onSelectCategory(key)}
+                            className={`px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2 ${
+                                selectedCategory === key
+                                    ? 'bg-purple-600 text-white shadow-md'
+                                    : 'bg-white text-gray-600 hover:bg-gray-100 shadow'
+                            }`}
+                        >
+                            <span>{icon}</span>
+                            <span>{label}</span>
+                            {stats && key && (
+                                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                    selectedCategory === key ? 'bg-white/20' : 'bg-gray-100'
+                                }`}>
+                                    {stats[key] || 0}
+                                </span>
+                            )}
+                        </button>
+                    ))}
+                </div>
+            );
+        }
+
+        // Tag List Component
+        function TagList({ tags, selectedTags, onToggleTag }) {
+            if (!tags || tags.length === 0) return null;
+
+            return (
+                <div className="mb-6">
+                    <h3 className="text-sm font-semibold text-gray-500 mb-3">FILTER BY TAGS</h3>
+                    <div className="flex flex-wrap gap-2">
+                        {tags.map((tag) => (
+                            <button
+                                key={tag.name}
+                                onClick={() => onToggleTag(tag.name)}
+                                className={`px-3 py-1 rounded-full text-sm font-medium transition-all ${
+                                    selectedTags.includes(tag.name)
+                                        ? 'bg-purple-600 text-white'
+                                        : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                                }`}
+                            >
+                                {tag.name}
+                                <span className="ml-1 opacity-60">({tag.count})</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // Connector Card Component
+        function ConnectorCard({ connector, onClick }) {
+            return (
+                <div
+                    onClick={onClick}
+                    className="bg-white rounded-xl shadow-md p-6 cursor-pointer card-hover transition-all border border-gray-100"
+                >
+                    <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                            <span className="text-2xl">{categoryIcons[connector.category]}</span>
+                            <div>
+                                <h3 className="font-bold text-lg text-gray-800">
+                                    {connector.displayName}
+                                </h3>
+                                <p className="text-sm text-gray-500">
+                                    {connector.namespace}/{connector.name}
+                                </p>
+                            </div>
+                        </div>
+                        {connector.verified && (
+                            <span className="text-blue-500 text-xl" title="Verified">✓</span>
+                        )}
+                    </div>
+
+                    <p className="text-gray-600 text-sm mb-4 line-clamp-2">
+                        {connector.description || 'No description available'}
+                    </p>
+
+                    <div className="flex flex-wrap gap-2 mb-4">
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${categoryColors[connector.category]}`}>
+                            {connector.category}
+                        </span>
+                        {connector.tags?.slice(0, 3).map((tag) => (
+                            <span
+                                key={tag}
+                                className="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600"
+                            >
+                                {tag}
+                            </span>
+                        ))}
+                        {connector.tags?.length > 3 && (
+                            <span className="px-2 py-1 text-xs text-gray-400">
+                                +{connector.tags.length - 3} more
+                            </span>
+                        )}
+                    </div>
+
+                    <div className="flex items-center justify-between text-sm text-gray-500 pt-3 border-t border-gray-100">
+                        <div className="flex items-center gap-4">
+                            <span title="Downloads">⬇️ {connector.downloads?.toLocaleString() || 0}</span>
+                            <span title="Stars">⭐ {connector.stars || 0}</span>
+                        </div>
+                        <span className="font-mono text-purple-600">v{connector.latestVersion}</span>
+                    </div>
+                </div>
+            );
+        }
+
+        // Connector Detail Modal
+        function ConnectorDetail({ connector, onClose }) {
+            const [activeTab, setActiveTab] = useState('overview');
+            const [sqlContent, setSqlContent] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [copied, setCopied] = useState(false);
+
+            useEffect(() => {
+                if (connector) {
+                    fetchSQL();
+                }
+            }, [connector]);
+
+            useEffect(() => {
+                // Highlight code blocks when content changes
+                document.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+            }, [activeTab, sqlContent, connector]);
+
+            const fetchSQL = async () => {
+                setLoading(true);
+                try {
+                    const response = await fetch(
+                        `${API_BASE}/connectors/${connector.namespace}/${connector.name}/sql`
+                    );
+                    const text = await response.text();
+                    setSqlContent(text);
+                } catch (error) {
+                    console.error('Failed to fetch SQL:', error);
+                    setSqlContent('-- Failed to load SQL');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const copyToClipboard = async (text) => {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                } catch (err) {
+                    console.error('Failed to copy:', err);
+                }
+            };
+
+            const downloadSQL = () => {
+                const blob = new Blob([sqlContent], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${connector.name}-${connector.latestVersion}.sql`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+
+            if (!connector) return null;
+
+            const detail = connector.latestVersionDetail || {};
+            const schema = detail.schema?.columns || [];
+            const dependencies = detail.dependencies || [];
+            const configTemplate = detail.configTemplate || [];
+            const examples = detail.examples || [];
+
+            return (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                        {/* Header */}
+                        <div className="gradient-bg text-white p-6">
+                            <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-4">
+                                    <span className="text-4xl">{categoryIcons[connector.category]}</span>
+                                    <div>
+                                        <h2 className="text-2xl font-bold">{connector.displayName}</h2>
+                                        <p className="text-purple-100">
+                                            {connector.namespace}/{connector.name} • v{connector.latestVersion}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={onClose}
+                                    className="text-white/80 hover:text-white text-2xl p-2"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                            
+                            <div className="flex items-center gap-4 mt-4">
+                                <span className={`px-3 py-1 rounded-full text-sm font-medium bg-white/20`}>
+                                    {connector.category}
+                                </span>
+                                <span className="text-purple-100">⬇️ {connector.downloads?.toLocaleString() || 0} downloads</span>
+                                <span className="text-purple-100">⭐ {connector.stars || 0} stars</span>
+                                {connector.verified && (
+                                    <span className="bg-white/20 px-2 py-1 rounded text-sm">✓ Verified</span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Tabs */}
+                        <div className="border-b border-gray-200 bg-gray-50">
+                            <div className="flex gap-1 px-4">
+                                {['overview', 'install', 'schema', 'code'].map((tab) => (
+                                    <button
+                                        key={tab}
+                                        onClick={() => setActiveTab(tab)}
+                                        className={`px-4 py-3 font-medium capitalize transition-all ${
+                                            activeTab === tab
+                                                ? 'text-purple-600 border-b-2 border-purple-600 bg-white'
+                                                : 'text-gray-500 hover:text-gray-700'
+                                        }`}
+                                    >
+                                        {tab}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 overflow-y-auto p-6">
+                            {activeTab === 'overview' && (
+                                <div className="space-y-6">
+                                    <div>
+                                        <h3 className="font-semibold text-gray-800 mb-2">Description</h3>
+                                        <p className="text-gray-600">{connector.description || 'No description available'}</p>
+                                    </div>
+
+                                    {connector.tags?.length > 0 && (
+                                        <div>
+                                            <h3 className="font-semibold text-gray-800 mb-2">Tags</h3>
+                                            <div className="flex flex-wrap gap-2">
+                                                {connector.tags.map((tag) => (
+                                                    <span key={tag} className="px-3 py-1 bg-gray-100 rounded-full text-sm text-gray-600">
+                                                        {tag}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {dependencies.length > 0 && (
+                                        <div>
+                                            <h3 className="font-semibold text-gray-800 mb-2">Python Dependencies</h3>
+                                            <div className="bg-gray-50 rounded-lg p-4">
+                                                {dependencies.map((dep, i) => (
+                                                    <div key={i} className="font-mono text-sm text-gray-700">
+                                                        {dep.name}{dep.version || ''}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {configTemplate.length > 0 && (
+                                        <div>
+                                            <h3 className="font-semibold text-gray-800 mb-2">Configuration</h3>
+                                            <p className="text-sm text-gray-500 mb-3">
+                                                Customize these values in the Python code before deploying:
+                                            </p>
+                                            <div className="bg-gray-50 rounded-lg overflow-hidden">
+                                                <table className="w-full text-sm">
+                                                    <thead className="bg-gray-100">
+                                                        <tr>
+                                                            <th className="text-left p-3 font-medium text-gray-700">Parameter</th>
+                                                            <th className="text-left p-3 font-medium text-gray-700">Example</th>
+                                                            <th className="text-left p-3 font-medium text-gray-700">Description</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {configTemplate.map((config, i) => (
+                                                            <tr key={i} className="border-t border-gray-200">
+                                                                <td className="p-3 font-mono text-purple-600">{config.name}</td>
+                                                                <td className="p-3 font-mono text-gray-600">{config.example || '-'}</td>
+                                                                <td className="p-3 text-gray-600">{config.description || '-'}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {examples.length > 0 && (
+                                        <div>
+                                            <h3 className="font-semibold text-gray-800 mb-2">Usage Examples</h3>
+                                            <div className="space-y-4">
+                                                {examples.map((example, i) => (
+                                                    <div key={i} className="bg-gray-900 rounded-lg overflow-hidden">
+                                                        <div className="px-4 py-2 bg-gray-800 text-gray-300 text-sm font-medium">
+                                                            {example.title}
+                                                        </div>
+                                                        <pre className="p-4 overflow-x-auto">
+                                                            <code className="language-sql text-sm">{example.code}</code>
+                                                        </pre>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {connector.homepage && (
+                                            <a href={connector.homepage} target="_blank" className="text-purple-600 hover:underline">
+                                                🏠 Homepage
+                                            </a>
+                                        )}
+                                        {connector.repository && (
+                                            <a href={connector.repository} target="_blank" className="text-purple-600 hover:underline">
+                                                📁 Repository
+                                            </a>
+                                        )}
+                                        {connector.documentation && (
+                                            <a href={connector.documentation} target="_blank" className="text-purple-600 hover:underline">
+                                                📖 Documentation
+                                            </a>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'install' && (
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="font-semibold text-gray-800">Installation SQL</h3>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => copyToClipboard(sqlContent)}
+                                                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium transition-all"
+                                            >
+                                                {copied ? '✓ Copied!' : '📋 Copy'}
+                                            </button>
+                                            <button
+                                                onClick={downloadSQL}
+                                                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-all"
+                                            >
+                                                ⬇️ Download .sql
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <p className="text-sm text-gray-500">
+                                        Run this SQL in your Timeplus Proton instance to install the connector:
+                                    </p>
+
+                                    {loading ? (
+                                        <div className="flex items-center justify-center py-12">
+                                            <div className="animate-spin text-4xl">⏳</div>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-gray-900 rounded-lg overflow-hidden">
+                                            <pre className="p-4 overflow-x-auto max-h-96">
+                                                <code className="language-sql text-sm">{sqlContent}</code>
+                                            </pre>
+                                        </div>
+                                    )}
+
+                                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                        <h4 className="font-medium text-blue-800 mb-2">💡 Quick Install via CLI</h4>
+                                        <pre className="bg-blue-100 rounded p-3 text-sm overflow-x-auto">
+                                            <code>curl "{API_BASE}/connectors/{connector.namespace}/{connector.name}/sql" | proton-client</code>
+                                        </pre>
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'schema' && (
+                                <div className="space-y-4">
+                                    <h3 className="font-semibold text-gray-800">Output Schema</h3>
+                                    <p className="text-sm text-gray-500">
+                                        {connector.category === 'sink' 
+                                            ? 'Columns expected when writing to this connector:'
+                                            : 'Columns returned when reading from this connector:'}
+                                    </p>
+                                    
+                                    {schema.length > 0 ? (
+                                        <div className="bg-gray-50 rounded-lg overflow-hidden">
+                                            <table className="w-full text-sm">
+                                                <thead className="bg-gray-100">
+                                                    <tr>
+                                                        <th className="text-left p-3 font-medium text-gray-700">Column</th>
+                                                        <th className="text-left p-3 font-medium text-gray-700">Type</th>
+                                                        <th className="text-left p-3 font-medium text-gray-700">Nullable</th>
+                                                        <th className="text-left p-3 font-medium text-gray-700">Description</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {schema.map((col, i) => (
+                                                        <tr key={i} className="border-t border-gray-200">
+                                                            <td className="p-3 font-mono text-purple-600">{col.name}</td>
+                                                            <td className="p-3 font-mono text-gray-600">{col.type}</td>
+                                                            <td className="p-3">{col.nullable ? '✓' : '✗'}</td>
+                                                            <td className="p-3 text-gray-600">{col.description || '-'}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    ) : (
+                                        <p className="text-gray-500 italic">No schema information available</p>
+                                    )}
+                                </div>
+                            )}
+
+                            {activeTab === 'code' && (
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="font-semibold text-gray-800">Python Source Code</h3>
+                                        <button
+                                            onClick={() => copyToClipboard(detail.pythonCode || '')}
+                                            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium transition-all"
+                                        >
+                                            📋 Copy
+                                        </button>
+                                    </div>
+                                    
+                                    <div className="bg-gray-900 rounded-lg overflow-hidden">
+                                        <pre className="p-4 overflow-x-auto max-h-96">
+                                            <code className="language-python text-sm">{detail.pythonCode || '# No code available'}</code>
+                                        </pre>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Empty State Component
+        function EmptyState({ searchQuery, selectedCategory, selectedTags }) {
+            const hasFilters = searchQuery || selectedCategory || selectedTags.length > 0;
+            
+            return (
+                <div className="text-center py-16">
+                    <div className="text-6xl mb-4">{hasFilters ? '🔍' : '📦'}</div>
+                    <h3 className="text-xl font-semibold text-gray-700 mb-2">
+                        {hasFilters ? 'No connectors found' : 'No connectors yet'}
+                    </h3>
+                    <p className="text-gray-500">
+                        {hasFilters 
+                            ? 'Try adjusting your search or filters'
+                            : 'Be the first to publish a connector!'}
+                    </p>
+                </div>
+            );
+        }
+
+        // Loading State Component
+        function LoadingState() {
+            return (
+                <div className="flex items-center justify-center py-16">
+                    <div className="text-center">
+                        <div className="animate-spin text-5xl mb-4">⚡</div>
+                        <p className="text-gray-500">Loading connectors...</p>
+                    </div>
+                </div>
+            );
+        }
+
+        // Error State Component
+        function ErrorState({ message, onRetry }) {
+            return (
+                <div className="text-center py-16">
+                    <div className="text-6xl mb-4">😵</div>
+                    <h3 className="text-xl font-semibold text-gray-700 mb-2">
+                        Failed to load connectors
+                    </h3>
+                    <p className="text-gray-500 mb-4">{message}</p>
+                    <button
+                        onClick={onRetry}
+                        className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all"
+                    >
+                        Retry
+                    </button>
+                </div>
+            );
+        }
+
+        // Main App Component
+        function App() {
+            const [connectors, setConnectors] = useState([]);
+            const [tags, setTags] = useState([]);
+            const [categoryStats, setCategoryStats] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            
+            const [searchQuery, setSearchQuery] = useState('');
+            const [selectedCategory, setSelectedCategory] = useState(null);
+            const [selectedTags, setSelectedTags] = useState([]);
+            const [selectedConnector, setSelectedConnector] = useState(null);
+
+            const fetchConnectors = useCallback(async () => {
+                setLoading(true);
+                setError(null);
+                
+                try {
+                    const params = new URLSearchParams();
+                    if (searchQuery) params.set('q', searchQuery);
+                    if (selectedCategory) params.set('category', selectedCategory);
+                    if (selectedTags.length > 0) params.set('tags', selectedTags.join(','));
+                    params.set('per_page', '50');
+
+                    const response = await fetch(`${API_BASE}/connectors?${params}`);
+                    if (!response.ok) throw new Error('Failed to fetch connectors');
+                    
+                    const data = await response.json();
+                    setConnectors(data.data || []);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setLoading(false);
+                }
+            }, [searchQuery, selectedCategory, selectedTags]);
+
+            const fetchTags = async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/tags`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        setTags(data);
+                    }
+                } catch (err) {
+                    console.error('Failed to fetch tags:', err);
+                }
+            };
+
+            const fetchCategoryStats = async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/categories`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        setCategoryStats(data);
+                    }
+                } catch (err) {
+                    console.error('Failed to fetch category stats:', err);
+                }
+            };
+
+            const fetchConnectorDetail = async (connector) => {
+                try {
+                    const response = await fetch(
+                        `${API_BASE}/connectors/${connector.namespace}/${connector.name}`
+                    );
+                    if (response.ok) {
+                        const data = await response.json();
+                        setSelectedConnector(data);
+                    }
+                } catch (err) {
+                    console.error('Failed to fetch connector detail:', err);
+                    setSelectedConnector(connector);
+                }
+            };
+
+            useEffect(() => {
+                fetchTags();
+                fetchCategoryStats();
+            }, []);
+
+            useEffect(() => {
+                const debounce = setTimeout(fetchConnectors, 300);
+                return () => clearTimeout(debounce);
+            }, [fetchConnectors]);
+
+            const handleToggleTag = (tag) => {
+                setSelectedTags((prev) =>
+                    prev.includes(tag)
+                        ? prev.filter((t) => t !== tag)
+                        : [...prev, tag]
+                );
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    <Header 
+                        searchQuery={searchQuery} 
+                        onSearch={setSearchQuery} 
+                    />
+
+                    <main className="max-w-7xl mx-auto px-4 py-8">
+                        <div className="flex gap-8">
+                            {/* Sidebar */}
+                            <aside className="w-64 flex-shrink-0 hidden lg:block">
+                                <div className="sticky top-8">
+                                    <CategoryFilter
+                                        selectedCategory={selectedCategory}
+                                        onSelectCategory={setSelectedCategory}
+                                        stats={categoryStats}
+                                    />
+                                    
+                                    <TagList
+                                        tags={tags}
+                                        selectedTags={selectedTags}
+                                        onToggleTag={handleToggleTag}
+                                    />
+
+                                    {(selectedCategory || selectedTags.length > 0 || searchQuery) && (
+                                        <button
+                                            onClick={() => {
+                                                setSearchQuery('');
+                                                setSelectedCategory(null);
+                                                setSelectedTags([]);
+                                            }}
+                                            className="w-full mt-4 px-4 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-all"
+                                        >
+                                            Clear all filters
+                                        </button>
+                                    )}
+                                </div>
+                            </aside>
+
+                            {/* Main Content */}
+                            <div className="flex-1">
+                                {/* Mobile Filters */}
+                                <div className="lg:hidden mb-6">
+                                    <CategoryFilter
+                                        selectedCategory={selectedCategory}
+                                        onSelectCategory={setSelectedCategory}
+                                        stats={categoryStats}
+                                    />
+                                </div>
+
+                                {/* Results Header */}
+                                <div className="flex items-center justify-between mb-6">
+                                    <h2 className="text-lg font-semibold text-gray-700">
+                                        {loading ? 'Loading...' : `${connectors.length} connector${connectors.length !== 1 ? 's' : ''}`}
+                                        {searchQuery && ` matching "${searchQuery}"`}
+                                    </h2>
+                                </div>
+
+                                {/* Content */}
+                                {loading ? (
+                                    <LoadingState />
+                                ) : error ? (
+                                    <ErrorState message={error} onRetry={fetchConnectors} />
+                                ) : connectors.length === 0 ? (
+                                    <EmptyState 
+                                        searchQuery={searchQuery}
+                                        selectedCategory={selectedCategory}
+                                        selectedTags={selectedTags}
+                                    />
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        {connectors.map((connector) => (
+                                            <ConnectorCard
+                                                key={`${connector.namespace}/${connector.name}`}
+                                                connector={connector}
+                                                onClick={() => fetchConnectorDetail(connector)}
+                                            />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </main>
+
+                    {/* Detail Modal */}
+                    {selectedConnector && (
+                        <ConnectorDetail
+                            connector={selectedConnector}
+                            onClose={() => setSelectedConnector(null)}
+                        />
+                    )}
+
+                    {/* Footer */}
+                    <footer className="border-t border-gray-200 mt-16 py-8 text-center text-gray-500">
+                        <p>Timeplus Connector Registry • Powered by Timeplus</p>
+                    </footer>
+                </div>
+            );
+        }
+
+        // Render the app
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
