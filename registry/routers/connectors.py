@@ -201,17 +201,30 @@ async def get_install_sql(
             "version": version_detail.version,
         },
         "spec": {
-            "category": version_detail.functions.get("read") and version_detail.functions.get("write") 
-                and "bidirectional" 
-                or (version_detail.functions.get("write") and "sink" or "source"),
+            "category": version_detail.functions.read and version_detail.functions.write
+                and "bidirectional"
+                or (version_detail.functions.write and "sink" or "source"),
             "mode": "streaming",  # Default
             "dependencies": [
                 f"{d.name}{d.version or ''}" for d in version_detail.dependencies
             ] if hasattr(version_detail, 'dependencies') else [
                 f"{d['name']}{d.get('version', '')}" for d in version_detail.dependencies
             ],
-            "schema": version_detail.schema_ if hasattr(version_detail, 'schema_') else version_detail.schema,
-            "functions": version_detail.functions,
+            "schema": {
+                "columns": [
+                    {
+                        "name": col.name,
+                        "type": col.type,
+                        "nullable": col.nullable,
+                        "description": col.description
+                    }
+                    for col in (version_detail.schema_ if hasattr(version_detail, 'schema_') else version_detail.schema).columns
+                ]
+            },
+            "functions": {
+                "read": {"name": version_detail.functions.read.name, "description": version_detail.functions.read.description} if version_detail.functions.read else None,
+                "write": {"name": version_detail.functions.write.name, "description": version_detail.functions.write.description} if version_detail.functions.write else None,
+            },
             "pythonCode": version_detail.pythonCode,
         },
     }
