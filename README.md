@@ -88,17 +88,17 @@ Once running, visit:
 curl -X POST "http://localhost:8000/api/v1/register" \
   -H "Content-Type: application/json" \
   -d '{
-    "namespace": "mycompany",
-    "display_name": "My Company",
-    "email": "dev@example.com",
-    "password": "securepassword123"
+    "namespace": "timeplus",
+    "display_name": "Timeplus",
+    "email": "gang@timeplus.com",
+    "password": "Password!"
   }'
 ```
 
 Response:
 ```json
 {
-  "access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0aW1lcGx1cyIsImV4cCI6MTc2OTIxNjg3Nn0.AM9duB3EW03lOkYMF5qZnoux5Kf15NL7iIBTP-eq0D4",
+  "access_token":"eyJhbGciOiJIUzI1Ni......",
   "token_type":"bearer"}
 ```
 
