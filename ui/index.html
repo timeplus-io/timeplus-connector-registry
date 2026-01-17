@@ -237,8 +237,8 @@
                             <span>{icon}</span>
                             <span>{label}</span>
                             {stats && key && (
-                                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                                    selectedCategory === key ? 'bg-white/20' : 'bg-gray-100'
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                                    selectedCategory === key ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'
                                 }`}>
                                     {stats[key] || 0}
                                 </span>
@@ -269,7 +269,7 @@
                                 style={{height: 'auto', fontSize: '12px'}}
                             >
                                 {tag.name}
-                                <span className="ml-1 opacity-60">({tag.count})</span>
+                                <span className={`ml-1 ${selectedTags.includes(tag.name) ? 'opacity-90' : 'opacity-60'}`}>({tag.count})</span>
                             </button>
                         ))}
                     </div>
