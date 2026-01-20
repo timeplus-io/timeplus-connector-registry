@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: websocket-read-connector
+  namespace: timeplus
+  version: "1.0.1"
+  displayName: WebSocket Read Connector
+  description: |
+    Reads data from a WebSocket endpoint and streams it into Timeplus.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+
+spec:
+  category: source
+  mode: streaming
+  
+  tags:
+    - websocket
+    - stream
+    - real-time
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - websocket-client>=1.4.0
+    - json5>=0.9.6 # For more flexible JSON parsing
+  
+  schema:
+    columns:
+      - name: message_payload
+        type: string
+        nullable: false
+        description: The raw message payload received from the WebSocket.
+      - name: timestamp
+        type: datetime64(3)
+        nullable: false
+        description: The time the message was received.
+  
+  functions:
+    read:
+      name: read_websocket_stream
+      description: Connects to a WebSocket and yields messages as a stream.
+
+  configTemplate:
+    - name: websocket_url
+      description: The URL of the WebSocket endpoint to connect to.
+      example: ws://localhost:8080/data
+      defaultValue: wss://echo.websocket.events
+      location: pythonCode
+
+  pythonCode: |
+    import websocket
+    import json5
+    import time
+    from datetime import datetime
+
+    def read_websocket_stream():
+        # Configuration - Now includes Python-side default handling
+        # Timeplus will pass the value from configTemplate or defaultValue if not provided by user.
+        # This explicit check handles cases where the interpolated string might be empty,
+        # ensuring a default is present within the Python logic itself.
+        _websocket_url_param = "${websocket_url}"
+        websocket_url = _websocket_url_param if _websocket_url_param else "wss://echo.websocket.events" 
+
+        ws = None
+        try:
+            ws = websocket.create_connection(websocket_url)
+            print(f"Connected to WebSocket at {websocket_url}")
+
+            while True:
+                try:
+                    message = ws.recv()
+                    # You might need to parse the message based on its format (e.g., JSON)
+                    # For this example, we'll assume it's a simple string or JSON string.
+                    # If it's JSON, you could do:
+                    # parsed_message = json5.loads(message)
+                    # yield [parsed_message['data_field'], datetime.now()]
+                    
+                    yield [message, datetime.now()]
+                except websocket.WebSocketConnectionClosedException:
+                    print("WebSocket connection closed, attempting to reconnect...")
+                    time.sleep(5) # Wait before attempting reconnection
+                    ws = websocket.create_connection(websocket_url)
+                    print(f"Reconnected to WebSocket at {websocket_url}")
+                except Exception as e:
+                    print(f"Error receiving message: {e}")
+                    time.sleep(1) # Small delay on other errors
+        except Exception as e:
+            print(f"Failed to connect to WebSocket: {e}")
+            # Depending on desired behavior, you might want to exit or retry
+            raise # Re-raise to indicate a critical setup failure
+        finally:
+            if ws:
+                ws.close()
+                print("WebSocket connection closed.")
+
+  examples:
+    - title: Basic Read (using default URL)
+      description: Read all messages from the default WebSocket stream.
+      code: |
+        SELECT message_payload, timestamp
+        FROM timeplus_builtin.websocket_read_connector();
+    
+    - title: Filtered Read (custom URL)
+      description: Read messages that contain specific text from a custom WebSocket URL.
+      code: |
+        SELECT message_payload, timestamp
+        FROM timeplus_builtin.websocket_read_connector(websocket_url => 'wss://another.websocket.server/data')
+        WHERE message_payload ILIKE '%status%';
+    
+    - title: Time-based Aggregation (default URL)
+      description: Count messages received per minute from the default WebSocket.
+      code: |
+        SELECT 
+          to_start_of_minute(timestamp) as minute_bucket,
+          count(*) as messages_count
+        FROM timeplus_builtin.websocket_read_connector()
+        GROUP BY minute_bucket;

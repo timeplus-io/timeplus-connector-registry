@@ -93,6 +93,9 @@ spec:
         <SQL example>
 ```
 
+###
+The schema definition in the CREATE EXTERNAL STREAM statement should reflect the output columns of the connector's read function, not its configuration parameters. The configuration parameters are passed directly to the timeplus_builtin.connector_name() function call in the INSERT INTO ... SELECT ... FROM statement.
+
 ### Common Dependencies:
 | System | Package |
 |--------|---------|

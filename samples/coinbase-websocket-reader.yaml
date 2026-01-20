@@ -1,0 +1,172 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: coinbase-websocket-read-connector
+  namespace: timeplus
+  version: "1.0.2"
+  displayName: Coinbase WebSocket Read Connector
+  description: |
+    Reads real-time market data from the Coinbase Exchange WebSocket feed.
+    Requires sending a subscription message after connecting.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+
+spec:
+  category: source
+  mode: streaming
+  
+  tags:
+    - websocket
+    - coinbase
+    - exchange
+    - crypto
+    - market-data
+    - real-time
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - websocket-client>=1.4.0
+    - json5>=0.9.6 # For more flexible JSON parsing
+  
+  schema:
+    columns:
+      - name: type
+        type: string
+        nullable: true
+        description: The type of message received (e.g., 'subscriptions', 'l2update', 'ticker').
+      - name: product_id
+        type: string
+        nullable: true
+        description: The product ID related to the message (e.g., 'BTC-USD').
+      - name: channel
+        type: string
+        nullable: true
+        description: The channel of the message (e.g., 'l2_data', 'ticker').
+      - name: full_payload
+        type: string
+        nullable: false
+        description: The full raw JSON payload of the message.
+      - name: received_at
+        type: datetime64(3)
+        nullable: false
+        description: The timestamp when the message was received by the connector.
+  
+  functions:
+    read:
+      name: read_coinbase_websocket_stream
+      description: Connects to Coinbase WebSocket, subscribes, and yields messages.
+
+  configTemplate:
+    - name: websocket_url
+      description: The URL of the Coinbase WebSocket endpoint.
+      example: wss://ws-feed.exchange.coinbase.com
+      defaultValue: wss://ws-feed.exchange.coinbase.com
+      location: pythonCode
+    - name: subscription_message
+      description: The JSON message to send to subscribe to channels/products.
+      example: '{"type": "subscribe", "product_ids": ["BTC-USD", "ETH-USD"], "channels": ["level2", "ticker"]}'
+      defaultValue: '{"type": "subscribe", "product_ids": ["BTC-USD"], "channels": ["ticker"]}'
+      location: pythonCode
+
+  pythonCode: |
+    import websocket
+    import json5
+    import time
+    from datetime import datetime
+
+    def read_coinbase_websocket_stream():
+        # Configuration - Now includes Python-side default handling
+        _websocket_url_param = "${websocket_url}"
+        websocket_url = _websocket_url_param if _websocket_url_param else "wss://ws-feed.exchange.coinbase.com" 
+
+        _subscription_message_param = "${subscription_message}"
+        subscription_message = _subscription_message_param if _subscription_message_param else '{"type": "subscribe", "product_ids": ["BTC-USD"], "channels": ["ticker"]}'
+
+        ws = None
+        while True: # Keep trying to connect/reconnect
+            try:
+                ws = websocket.create_connection(websocket_url)
+                print(f"Connected to Coinbase WebSocket at {websocket_url}")
+
+                # Send the subscription message
+                ws.send(subscription_message)
+                print(f"Sent subscription message: {subscription_message}")
+
+                while True:
+                    message = ws.recv()
+                    parsed_message = json5.loads(message)
+                    
+                    # Extract common fields, handle potential missing keys
+                    msg_type = parsed_message.get('type')
+                    product_id = parsed_message.get('product_id')
+                    channels = parsed_message.get('channels') # This is for the subscription confirmation message
+                    channel_name = None
+                    if msg_type == 'subscriptions' and channels:
+                        # For the subscription confirmation message, extract channel info differently
+                        channel_name = ", ".join([c.get('name', 'unknown') for c in channels])
+                    elif 'channel' in parsed_message:
+                        channel_name = parsed_message.get('channel') # For data messages where a single channel is present
+
+                    yield [
+                        msg_type,
+                        product_id,
+                        channel_name,
+                        message, # Full raw payload
+                        datetime.now()
+                    ]
+
+            except websocket.WebSocketConnectionClosedException:
+                print("Coinbase WebSocket connection closed, attempting to reconnect...")
+                time.sleep(5) # Wait before attempting reconnection
+            except ConnectionRefusedError:
+                print(f"Connection refused to {websocket_url}, retrying in 10 seconds...")
+                time.sleep(10)
+            except Exception as e:
+                print(f"An error occurred: {e}")
+                time.sleep(5) # Delay on other errors before retrying
+            finally:
+                if ws:
+                    ws.close()
+                    print("Coinbase WebSocket connection closed.")
+            time.sleep(1) # Small delay between reconnection attempts in outer loop
+
+  examples:
+    - title: Read Default Coinbase Ticker Data
+      description: Retrieve ticker messages for BTC-USD (using default subscription).
+      code: |
+        SELECT type, product_id, channel, full_payload, received_at
+        FROM timeplus_builtin.coinbase_websocket_read_connector();
+
+    - title: Filter for Level2 Updates (custom subscription)
+      description: Focus on real-time order book (level2) updates for BTC-USD.
+      code: |
+        SELECT 
+          received_at,
+          JSONExtractString(full_payload, '$.product_id') AS product,
+          JSONExtractString(full_payload, '$.type') AS message_type,
+          JSONExtractString(full_payload, '$.changes[0][0]') AS side, -- 'buy' or 'sell'
+          JSONExtractString(full_payload, '$.changes[0][1]') AS price,
+          JSONExtractString(full_payload, '$.changes[0][2]') AS size
+        FROM timeplus_builtin.coinbase_websocket_read_connector(
+            subscription_message => '{"type": "subscribe", "product_ids": ["BTC-USD"], "channels": ["level2"]}'
+        )
+        WHERE type = 'l2update';
+
+    - title: Aggregate Ticker Prices for ETH-USD
+      description: Calculate the approximate average last trade price from ETH-USD ticker messages over 5-second windows.
+      code: |
+        SELECT 
+          window_start() as window_start_time,
+          avg(CAST(JSONExtractString(full_payload, '$.price') AS float64)) AS average_price
+        FROM timeplus_builtin.coinbase_websocket_read_connector(
+            subscription_message => '{"type": "subscribe", "product_ids": ["ETH-USD"], "channels": ["ticker"]}'
+        )
+        WHERE type = 'ticker'
+        GROUP BY window_start()
+        WINDOW tumbling(5s);
