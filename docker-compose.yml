@@ -49,5 +49,43 @@ services:
     depends_on:
       - api
 
+  timeplus:
+    image: timeplus/timeplusd:3.0.3-rc.29
+    platform: linux/amd64
+    ports:
+      - 8463:8463
+      - 8123:8123
+      - 3218:3218
+    environment:
+      - ENABLE_DATA_PREALLOCATE=false
+    volumes:
+      - timeplus_data:/var/lib/timeplusd/
+
+  redpanda:
+    image: redpandadata/redpanda:v23.3.4
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 1G
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --node-id 0
+      - --check=false
+      - --kafka-addr PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:9092,OUTSIDE://localhost:19092
+      - --schema-registry-addr 0.0.0.0:8081
+      - --pandaproxy-addr 0.0.0.0:8082
+      - --advertise-pandaproxy-addr localhost:8082
+    ports:
+      - "19092:19092"
+      - "9644:9644"  # Admin API
+      - "8081:8081"  # Schema Registry
+    volumes:
+      - redpanda-data:/var/lib/redpanda
+    environment:
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
 volumes:
   postgres_data:
+  timeplus_data:
+  redpanda-data:

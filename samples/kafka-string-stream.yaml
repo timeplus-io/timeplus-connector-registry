@@ -1,0 +1,154 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: kafka-string-stream
+  namespace: timeplus
+  version: 1.0.0
+  displayName: Kafka String Stream
+  description: |
+    Bidirectional Kafka connector with a single string column.
+    Read raw string messages from a Kafka topic and write string messages back.
+    Suitable for JSON, plain text, or any string-serialized data.
+  authors:
+    - name: Timeplus
+      email: support@timeplus.com
+  license: Apache-2.0
+  homepage: https://github.com/timeplus-io/connectors
+  repository: https://github.com/timeplus-io/connectors
+  documentation: https://docs.timeplus.com/connectors/kafka
+
+spec:
+  category: bidirectional
+  mode: streaming
+  
+  tags:
+    - kafka
+    - streaming
+    - bidirectional
+    - message-queue
+    - sample
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - kafka-python>=2.0.2
+  
+  schema:
+    columns:
+      - name: data
+        type: string
+        nullable: false
+        description: The raw string message content
+
+  functions:
+    read:
+      name: kafka_string_read
+      description: Read string messages from Kafka topic as a continuous stream
+    write:
+      name: kafka_string_write
+      description: Write string messages to Kafka topic
+
+  configTemplate:
+    - name: bootstrap_servers
+      description: Kafka broker addresses (comma-separated for multiple brokers)
+      example: "localhost:9092"
+      location: "Lines 6 and 22 in pythonCode"
+    - name: read_topic
+      description: Kafka topic to read from
+      example: "input-topic"
+      location: "Line 5 in pythonCode"
+    - name: write_topic
+      description: Kafka topic to write to
+      example: "output-topic"
+      location: "Line 27 in pythonCode"
+    - name: group_id
+      description: Consumer group ID for offset tracking
+      example: "timeplus-consumer-group"
+      location: "Line 9 in pythonCode"
+    - name: auto_offset_reset
+      description: Where to start consuming if no offset exists (earliest or latest)
+      example: "earliest"
+      location: "Line 7 in pythonCode"
+
+  pythonCode: |
+    from kafka import KafkaConsumer, KafkaProducer
+    import json
+    
+    def kafka_string_read():
+        consumer = KafkaConsumer(
+            "input-topic",
+            bootstrap_servers="redpanda:9092",
+            auto_offset_reset="earliest",
+            enable_auto_commit=True,
+            group_id="timeplus-consumer-group",
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+        )
+        try:
+            for msg in consumer:
+                yield [msg.value]
+        finally:
+            consumer.close()
+    
+    def kafka_string_write(values):
+        producer = KafkaProducer(
+            bootstrap_servers="redpanda:9092",
+            value_serializer=lambda v: json.dumps({"value": v}).encode("utf-8"),
+        )
+        try:
+            for row in values:
+                data = row[0] if row[0] is not None else ""
+                producer.send("output-topic", data)
+            producer.flush()
+        finally:
+            producer.close()
+
+  examples:
+    - title: Read All Messages
+      description: Stream all messages from the configured Kafka topic
+      code: |
+        SELECT * FROM kafka_string_stream;
+    
+    - title: Read with Filter
+      description: Filter messages containing specific text
+      code: |
+        SELECT data 
+        FROM kafka_string_stream 
+        WHERE data LIKE '%error%';
+    
+    - title: Write Single Message
+      description: Send a single message to Kafka
+      code: |
+        INSERT INTO kafka_string_stream(data) 
+        VALUES ('Hello, Kafka!');
+    
+    - title: Write JSON String
+      description: Send a JSON object as a string
+      code: |
+        INSERT INTO kafka_string_stream(data) 
+        VALUES ('{"event":"click","user_id":123,"timestamp":"2025-01-17T00:00:00Z"}');
+    
+    - title: Stream Processing - Pass Through
+      description: Read from input, write to output (different topics require separate connectors)
+      code: |
+        INSERT INTO kafka_string_stream(data)
+        SELECT data FROM kafka_string_stream;
+    
+    - title: Transform and Write
+      description: Transform data and write back
+      code: |
+        INSERT INTO kafka_string_stream(data)
+        SELECT upper(data) 
+        FROM kafka_string_stream 
+        WHERE length(data) > 0;
+    
+    - title: Parse JSON and Aggregate
+      description: Parse JSON strings and perform aggregation
+      code: |
+        SELECT 
+          json_extract_string(data, '$.event') as event_type,
+          count(*) as cnt
+        FROM kafka_string_stream
+        GROUP BY event_type;
