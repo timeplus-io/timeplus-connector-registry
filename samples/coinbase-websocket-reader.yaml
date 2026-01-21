@@ -4,7 +4,7 @@ kind: Connector
 metadata:
   name: coinbase-websocket-read-connector
   namespace: timeplus
-  version: "1.0.4"
+  version: "1.0.5"
   displayName: Coinbase WebSocket Read Connector
   description: |
     Reads real-time market data from the Coinbase Exchange WebSocket feed.
@@ -81,57 +81,43 @@ spec:
     from datetime import datetime
 
     def read_coinbase_websocket_stream():
-        # Configuration - Now includes Python-side default handling
-        websocket_url = "wss://ws-feed.exchange.coinbase.com" 
+        websocket_url = "wss://ws-feed.exchange.coinbase.com"
         subscription_message = '{"type": "subscribe", "product_ids": ["BTC-USD"], "channels": ["ticker"]}'
 
         ws = None
-        while True: # Keep trying to connect/reconnect
+        while True:
             try:
                 ws = websocket.create_connection(websocket_url)
-                print(f"Connected to Coinbase WebSocket at {websocket_url}")
-
-                # Send the subscription message
                 ws.send(subscription_message)
-                print(f"Sent subscription message: {subscription_message}")
 
                 while True:
-                    message = ws.recv()
-                    parsed_message = json5.loads(message)
-                    
-                    # Extract common fields, handle potential missing keys
-                    msg_type = parsed_message.get('type')
-                    product_id = parsed_message.get('product_id')
-                    channels = parsed_message.get('channels') # This is for the subscription confirmation message
-                    channel_name = None
-                    if msg_type == 'subscriptions' and channels:
-                        # For the subscription confirmation message, extract channel info differently
-                        channel_name = ", ".join([c.get('name', 'unknown') for c in channels])
-                    elif 'channel' in parsed_message:
-                        channel_name = parsed_message.get('channel') # For data messages where a single channel is present
+                    message = ws.recv() or ""
+                    parsed_message = json5.loads(message) or {}
 
-                    yield [
+                    msg_type = parsed_message.get("type") or ""
+                    product_id = parsed_message.get("product_id") or ""
+
+                    channel_name = ""
+                    channels = parsed_message.get("channels")
+                    if msg_type == "subscriptions" and channels:
+                        channel_name = ", ".join([c.get("name", "unknown") for c in channels]) or ""
+                    elif "channel" in parsed_message:
+                        channel_name = parsed_message.get("channel") or ""
+
+                    yield (
                         msg_type,
                         product_id,
                         channel_name,
-                        message, # Full raw payload
-                        datetime.now()
-                    ]
+                        message,
+                        datetime.utcnow(),
+                    )
 
-            except websocket.WebSocketConnectionClosedException:
-                print("Coinbase WebSocket connection closed, attempting to reconnect...")
-                time.sleep(5) # Wait before attempting reconnection
-            except ConnectionRefusedError:
-                print(f"Connection refused to {websocket_url}, retrying in 10 seconds...")
-                time.sleep(10)
-            except Exception as e:
-                print(f"An error occurred: {e}")
-                time.sleep(5) # Delay on other errors before retrying
+            except Exception:
+                time.sleep(5)
             finally:
                 if ws:
                     ws.close()
-                    print("Coinbase WebSocket connection closed.")
-            time.sleep(1) # Small delay between reconnection attempts in outer loop
+            time.sleep(1)
 
   examples:
     - title: Read Default Coinbase Ticker Data
