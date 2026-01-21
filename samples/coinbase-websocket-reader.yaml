@@ -138,7 +138,7 @@ spec:
       description: Retrieve ticker messages for BTC-USD (using default subscription).
       code: |
         SELECT type, product_id, channel, full_payload, received_at
-        FROM timeplus_builtin.coinbase_websocket_read_connector();
+        FROM timeplus_builtin.coinbase_websocket_read_connector;
 
     - title: Filter for Level2 Updates (custom subscription)
       description: Focus on real-time order book (level2) updates for BTC-USD.
@@ -150,9 +150,7 @@ spec:
           JSONExtractString(full_payload, '$.changes[0][0]') AS side, -- 'buy' or 'sell'
           JSONExtractString(full_payload, '$.changes[0][1]') AS price,
           JSONExtractString(full_payload, '$.changes[0][2]') AS size
-        FROM timeplus_builtin.coinbase_websocket_read_connector(
-            subscription_message => '{"type": "subscribe", "product_ids": ["BTC-USD"], "channels": ["level2"]}'
-        )
+        FROM timeplus_builtin.coinbase_websocket_read_connector
         WHERE type = 'l2update';
 
     - title: Aggregate Ticker Prices for ETH-USD
@@ -161,9 +159,7 @@ spec:
         SELECT 
           window_start() as window_start_time,
           avg(CAST(JSONExtractString(full_payload, '$.price') AS float64)) AS average_price
-        FROM timeplus_builtin.coinbase_websocket_read_connector(
-            subscription_message => '{"type": "subscribe", "product_ids": ["ETH-USD"], "channels": ["ticker"]}'
-        )
+        FROM timeplus_builtin.coinbase_websocket_read_connector
         WHERE type = 'ticker'
         GROUP BY window_start()
         WINDOW tumbling(5s);

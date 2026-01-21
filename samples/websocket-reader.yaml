@@ -104,13 +104,13 @@ spec:
       description: Read all messages from the default WebSocket stream.
       code: |
         SELECT message_payload, timestamp
-        FROM timeplus_builtin.websocket_read_connector();
+        FROM timeplus_builtin.websocket_read_connector;
     
     - title: Filtered Read (custom URL)
       description: Read messages that contain specific text from a custom WebSocket URL.
       code: |
         SELECT message_payload, timestamp
-        FROM timeplus_builtin.websocket_read_connector(websocket_url => 'wss://another.websocket.server/data')
+        FROM websocket_read_connector
         WHERE message_payload ILIKE '%status%';
     
     - title: Time-based Aggregation (default URL)
@@ -119,5 +119,5 @@ spec:
         SELECT 
           to_start_of_minute(timestamp) as minute_bucket,
           count(*) as messages_count
-        FROM timeplus_builtin.websocket_read_connector()
+        FROM websocket_read_connector
         GROUP BY minute_bucket;
