@@ -4,7 +4,7 @@ kind: Connector
 metadata:
   name: coinbase-websocket-read-connector
   namespace: timeplus
-  version: "1.0.2"
+  version: "1.0.4"
   displayName: Coinbase WebSocket Read Connector
   description: |
     Reads real-time market data from the Coinbase Exchange WebSocket feed.
@@ -82,11 +82,8 @@ spec:
 
     def read_coinbase_websocket_stream():
         # Configuration - Now includes Python-side default handling
-        _websocket_url_param = "${websocket_url}"
-        websocket_url = _websocket_url_param if _websocket_url_param else "wss://ws-feed.exchange.coinbase.com" 
-
-        _subscription_message_param = "${subscription_message}"
-        subscription_message = _subscription_message_param if _subscription_message_param else '{"type": "subscribe", "product_ids": ["BTC-USD"], "channels": ["ticker"]}'
+        websocket_url = "wss://ws-feed.exchange.coinbase.com" 
+        subscription_message = '{"type": "subscribe", "product_ids": ["BTC-USD"], "channels": ["ticker"]}'
 
         ws = None
         while True: # Keep trying to connect/reconnect
