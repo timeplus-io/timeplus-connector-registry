@@ -40,11 +40,13 @@ CREATE RANDOM STREAM test_source(
 )
 SETTINGS eps = 1;
 
--- No result
+-- adding SETTINGS min_insert_block_size_rows=1 to force Timeplus to process each row immediately
 INSERT INTO kafka_string_stream(data) 
-SELECT raw as data FROM test_source;
+SELECT raw as data FROM test_source
+SETTINGS min_insert_block_size_rows=1;
 
 CREATE MATERIALIZED VIEW mv_kafka_string_sink
 INTO kafka_string_stream
 AS
-SELECT raw as data FROM test_source;
+SELECT raw as data FROM test_source
+SETTINGS min_insert_block_size_rows=1;
