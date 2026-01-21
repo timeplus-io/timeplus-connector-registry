@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: nats-write-connector
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: NATS Write Connector
+  description: |
+    A sink connector to publish single-column Timeplus data as messages to a NATS subject.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+
+spec:
+  category: sink
+  mode: streaming
+  
+  tags:
+    - nats
+    - messaging
+    - real-time
+    - pubsub
+    - sink
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - nats-py>=2.0.0
+  
+  schema:
+    columns:
+      # Schema for Write function (what the connector expects as input)
+      - name: message_string
+        type: string
+        nullable: false
+        description: The string content of the message to be published to NATS.
+  
+  functions:
+    write:
+      name: write_nats_messages
+      description: Publishes incoming Timeplus message strings to a NATS subject.
+
+  configTemplate:
+    - name: nats_url
+      description: The URL of the NATS server.
+      example: nats://nats:4222
+      defaultValue: nats://localhost:4222
+      location: pythonCode
+    - name: nats_write_subject
+      description: The NATS subject to publish data to.
+      example: analytics.results
+      defaultValue: timeplus.data.out
+      location: pythonCode
+    - name: nats_timeout
+      description: Timeout in seconds for NATS connection.
+      example: 5
+      defaultValue: 10
+      location: pythonCode
+
+  pythonCode: |
+    import nats
+    import asyncio
+    import json # Although we're just sending strings, json might be useful for future serialization
+    import time
+
+    async def _get_nats_connection(nats_url, nats_timeout):
+        try:
+            nc = await nats.connect(nats_url, timeout=float(nats_timeout))
+            return nc
+        except Exception as e:
+            print(f"Failed to connect to NATS server at {nats_url}: {e}")
+            raise
+
+    def write_nats_messages(values): # 'values' will be an iterator of tuples, each with one element
+        nats_url = "nats://nats:4222"
+        nats_write_subject = "analytics.results"
+        nats_timeout = 5
+
+        print(f"NATS Write Connector: Connecting to '{nats_url}', publishing to '{nats_write_subject}'")
+
+        async def _writer_coro():
+            nc = None
+            try:
+                nc = await _get_nats_connection(nats_url, nats_timeout)
+                print(f"NATS Write Connector: Connected to '{nats_url}'")
+                
+                # Each row from Timeplus is expected to be a tuple (message_string,)
+                for row_tuple in values:
+                    try:
+                        # Assuming the input schema has only one column: message_string
+                        if not row_tuple or not isinstance(row_tuple, tuple) or len(row_tuple) != 1:
+                            print(f"Warning: Expected a single-element tuple, but got {row_tuple}. Skipping.")
+                            continue
+                        
+                        message_string = row_tuple[0]
+                        message_payload = str(message_string).encode('utf-8') # Ensure it's a string, then bytes
+                        
+                        await nc.publish(nats_write_subject, message_payload)
+                    except Exception as e:
+                        print(f"Error publishing row {row_tuple} to NATS: {e}")
+                
+                await nc.flush() # Ensure all messages are sent
+
+            except Exception as e:
+                print(f"NATS Write Connector main loop error: {e}")
+                raise
+            finally:
+                if nc:
+                    await nc.close()
+                    print(f"NATS Write Connector: Connection to '{nats_url}' closed.")
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_writer_coro())
+        except Exception as e:
+            print(f"NATS Write Connector caught exception in event loop: {e}")
+            raise
+        finally:
+            loop.close()
+
+  examples:
+    - title: Publish Simple Messages to NATS
+      description: Create a stream and publish messages to the default NATS output subject.
+      code: |
+        CREATE STREAM my_output_stream;
+        INSERT INTO my_output_stream(values) VALUES ('Hello NATS from Timeplus!'), ('Another Timeplus message.');
+
+        -- The 'message_content' column from 'my_output_stream' will be mapped to the 'message_string' input of the connector
+        INSERT INTO nats_write_connector(values)
+        SELECT message_content FROM my_output_stream;

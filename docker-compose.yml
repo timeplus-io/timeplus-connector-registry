@@ -85,6 +85,19 @@ services:
     environment:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
+  nats:
+    container_name: nats-server
+    image: nats:latest
+    ports:
+      - "4222:4222"
+
+  nats-js:
+    container_name: nats-server-js
+    image: nats:latest
+    command: -js
+    ports:
+      - "4223:4222"
+
 volumes:
   postgres_data:
   timeplus_data:

@@ -1,0 +1,172 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: nats-read-connector
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: NATS Read Connector
+  description: |
+    A source connector to subscribe to NATS subjects and stream messages into Timeplus.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+
+spec:
+  category: source
+  mode: streaming
+  
+  tags:
+    - nats
+    - messaging
+    - real-time
+    - pubsub
+    - source
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - nats-py>=2.0.0
+  
+  schema:
+    columns:
+      - name: nats_subject
+        type: string
+        nullable: false
+        description: The NATS subject the message was received on.
+      - name: message_data
+        type: string
+        nullable: false
+        description: The payload of the NATS message (decoded as UTF-8 string).
+      - name: received_at
+        type: datetime64(3)
+        nullable: false
+        description: The timestamp when the message was received by the connector.
+  
+  functions:
+    read:
+      name: read_nats_stream
+      description: Subscribes to a NATS subject and yields messages.
+
+  configTemplate:
+    - name: nats_url
+      description: The URL of the NATS server.
+      example: nats://localhost:4222
+      defaultValue: nats://localhost:4222
+      location: pythonCode
+    - name: nats_read_subject
+      description: The NATS subject to subscribe to for reading data.
+      example: sensor.data
+      defaultValue: timeplus.data.in
+      location: pythonCode
+    - name: nats_timeout
+      description: Timeout in seconds for NATS connection.
+      example: 5
+      defaultValue: 10
+      location: pythonCode
+
+  pythonCode: |
+    import nats
+    import asyncio
+    import time
+    from datetime import datetime
+
+    async def _get_nats_connection(nats_url, nats_timeout):
+        try:
+            nc = await nats.connect(nats_url, timeout=float(nats_timeout))
+            return nc
+        except Exception as e:
+            print(f"Failed to connect to NATS server at {nats_url}: {e}")
+            raise
+
+    def read_nats_stream():
+        nats_url = "nats://localhost:4222"
+        nats_read_subject = "sensor.data"
+        nats_timeout = 5
+
+        print(f"NATS Read Connector: Connecting to '{nats_url}', subscribing to '{nats_read_subject}'")
+
+        async def _reader_coro():
+            nc = None
+            sub = None
+            try:
+                nc = await _get_nats_connection(nats_url, nats_timeout)
+                
+                q = asyncio.Queue()
+
+                async def msg_handler(msg):
+                    try:
+                        data = msg.data.decode()
+                        await q.put((msg.subject, data, datetime.utcnow()))
+                    except Exception as e:
+                        print(f"Error processing NATS message: {e}")
+
+                sub = await nc.subscribe(nats_read_subject, cb=msg_handler)
+                print(f"NATS Read Connector: Subscribed to '{nats_read_subject}'")
+
+                while True:
+                    try:
+                        subject, data, timestamp = await asyncio.wait_for(q.get(), timeout=1.0)
+                        yield (subject, data, timestamp)
+                    except asyncio.TimeoutError:
+                        if not nc.is_connected:
+                            print("NATS connection lost, attempting to reconnect...")
+                            break
+                    except Exception as e:
+                        print(f"Error yielding message from queue: {e}")
+                        break
+
+            except Exception as e:
+                print(f"NATS Read Connector main loop error: {e}")
+                raise
+            finally:
+                if sub:
+                    await sub.unsubscribe()
+                    print(f"NATS Read Connector: Unsubscribed from '{nats_read_subject}'")
+                if nc:
+                    await nc.close()
+                    print(f"NATS Read Connector: Connection to '{nats_url}' closed.")
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            generator = _reader_coro()
+            while True:
+                try:
+                    item = loop.run_until_complete(generator.__anext__())
+                    yield item
+                except StopAsyncIteration:
+                    break
+        except Exception as e:
+            print(f"NATS Read Connector caught exception in event loop: {e}")
+            raise
+        finally:
+            loop.close()
+
+  examples:
+    - title: Read Messages from Default NATS Subject
+      description: Subscribe to the default NATS subject and display messages.
+      code: |
+        SELECT nats_subject, message_data, received_at
+        FROM nats_read_connector;
+
+    - title: Filtered Read from Specific Subject
+      description: Subscribe to a specific NATS subject and filter messages containing "error".
+      code: |
+        SELECT nats_subject, message_data, received_at
+        FROM nats_read_connector
+        WHERE message_data ILIKE '%error%';
+
+    - title: Read and Aggregate Sensor Temperatures
+      description: Read temperature readings from NATS, parse them, and calculate average per minute.
+      code: |
+        -- Assuming NATS messages are JSON like: {"sensor_id": "temp_01", "temperature": 25.5}
+        SELECT
+          window_start,
+          message_data:sensor_id AS sensor_id,
+          avg(message_data:temperature::float64) AS avg_temp
+        FROM tumble(nats_read_connector, received_at, 1m)
+        GROUP BY window_start, sensor_id;
