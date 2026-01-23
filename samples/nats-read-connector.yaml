@@ -4,7 +4,7 @@ kind: Connector
 metadata:
   name: nats-read-connector
   namespace: timeplus
-  version: "1.0.0"
+  version: "1.0.1"
   displayName: NATS Read Connector
   description: |
     A source connector to subscribe to NATS subjects and stream messages into Timeplus.
@@ -59,13 +59,13 @@ spec:
       location: pythonCode
     - name: nats_read_subject
       description: The NATS subject to subscribe to for reading data.
-      example: sensor.data
-      defaultValue: timeplus.data.in
+      example: sensor_data
+      defaultValue: sensor_data
       location: pythonCode
     - name: nats_timeout
       description: Timeout in seconds for NATS connection.
-      example: 5
-      defaultValue: 10
+      example: "5"
+      defaultValue: "10"
       location: pythonCode
 
   pythonCode: |
@@ -76,7 +76,7 @@ spec:
 
     async def _get_nats_connection(nats_url, nats_timeout):
         try:
-            nc = await nats.connect(nats_url, timeout=float(nats_timeout))
+            nc = await nats.connect(nats_url, connect_timeout=float(nats_timeout))
             return nc
         except Exception as e:
             print(f"Failed to connect to NATS server at {nats_url}: {e}")

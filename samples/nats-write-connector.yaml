@@ -4,7 +4,7 @@ kind: Connector
 metadata:
   name: nats-write-connector
   namespace: timeplus
-  version: "1.0.0"
+  version: "1.0.2"
   displayName: NATS Write Connector
   description: |
     A sink connector to publish single-column Timeplus data as messages to a NATS subject.
@@ -57,8 +57,8 @@ spec:
       location: pythonCode
     - name: nats_timeout
       description: Timeout in seconds for NATS connection.
-      example: 5
-      defaultValue: 10
+      example: "5"
+      defaultValue: "10"
       location: pythonCode
 
   pythonCode: |
@@ -69,7 +69,7 @@ spec:
 
     async def _get_nats_connection(nats_url, nats_timeout):
         try:
-            nc = await nats.connect(nats_url, timeout=float(nats_timeout))
+            nc = await nats.connect(nats_url, connect_timeout=float(nats_timeout))
             return nc
         except Exception as e:
             print(f"Failed to connect to NATS server at {nats_url}: {e}")
@@ -89,14 +89,14 @@ spec:
                 print(f"NATS Write Connector: Connected to '{nats_url}'")
                 
                 # Each row from Timeplus is expected to be a tuple (message_string,)
-                for row_tuple in values:
+                for row in values:
                     try:
                         # Assuming the input schema has only one column: message_string
-                        if not row_tuple or not isinstance(row_tuple, tuple) or len(row_tuple) != 1:
+                        if not row :
                             print(f"Warning: Expected a single-element tuple, but got {row_tuple}. Skipping.")
                             continue
                         
-                        message_string = row_tuple[0]
+                        message_string = row
                         message_payload = str(message_string).encode('utf-8') # Ensure it's a string, then bytes
                         
                         await nc.publish(nats_write_subject, message_payload)

@@ -73,7 +73,7 @@ spec:
         client = setup_client()
         try:
             for item in client.stream():
-                yield [col1_value, col2_value, ...]
+                yield (col1_value, col2_value, ...) # return tuple for multiple columns
         finally:
             client.close()
     
@@ -81,8 +81,8 @@ spec:
     def write_func(values):
         client = setup_client()
         try:
-            for row in values:
-                client.send(row[0], row[1], ...)
+            for row in values: 
+                client.send(row)
             client.flush()
         finally:
             client.close()
