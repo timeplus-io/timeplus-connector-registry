@@ -4,7 +4,7 @@ kind: Connector
 metadata:
   name: nats-read-connector
   namespace: timeplus
-  version: "1.0.1"
+  version: "1.0.2"
   displayName: NATS Read Connector
   description: |
     A source connector to subscribe to NATS subjects and stream messages into Timeplus.
@@ -83,7 +83,7 @@ spec:
             raise
 
     def read_nats_stream():
-        nats_url = "nats://localhost:4222"
+        nats_url = "nats://nats:4222"
         nats_read_subject = "sensor.data"
         nats_timeout = 5
 
