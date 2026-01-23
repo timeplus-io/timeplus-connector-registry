@@ -1,0 +1,214 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: nats-jetstream-read-connector
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: NATS JetStream Read Connector
+  description: |
+    A source connector to consume messages from NATS JetStream and stream them into Timeplus.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+
+spec:
+  category: source
+  mode: streaming
+
+  tags:
+    - nats
+    - jetstream
+    - messaging
+    - real-time
+    - pubsub
+    - source
+
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+
+  dependencies:
+    - nats-py>=2.0.0
+
+  schema:
+    columns:
+      - name: nats_subject
+        type: string
+        nullable: false
+        description: The NATS subject the message was received on.
+      - name: message_data
+        type: string
+        nullable: false
+        description: The payload of the JetStream message (decoded as UTF-8 string).
+      - name: sequence
+        type: uint64
+        nullable: false
+        description: The sequence number of the message in the stream.
+      - name: received_at
+        type: datetime64(3)
+        nullable: false
+        description: The timestamp when the message was received by the connector.
+
+  functions:
+    read:
+      name: read_jetstream
+      description: Consumes messages from a NATS JetStream consumer and yields messages.
+
+  configTemplate:
+    - name: nats_url
+      description: The URL of the NATS server.
+      example: nats://localhost:4222
+      defaultValue: nats://localhost:4222
+      location: pythonCode
+    - name: stream_name
+      description: The name of the JetStream stream to consume from.
+      example: EVENTS
+      defaultValue: EVENTS
+      location: pythonCode
+    - name: consumer_name
+      description: The name of the JetStream consumer (will be created if it doesn't exist).
+      example: timeplus_consumer
+      defaultValue: timeplus_consumer
+      location: pythonCode
+    - name: filter_subject
+      description: Optional subject filter for the consumer (empty means all subjects in stream).
+      example: events.orders
+      defaultValue: ""
+      location: pythonCode
+    - name: nats_timeout
+      description: Timeout in seconds for NATS connection.
+      example: "5"
+      defaultValue: "10"
+      location: pythonCode
+
+  pythonCode: |
+    import nats
+    from nats.js import JetStreamContext
+    import asyncio
+    from datetime import datetime
+
+    async def _get_nats_connection(nats_url, nats_timeout):
+        try:
+            nc = await nats.connect(nats_url, connect_timeout=float(nats_timeout))
+            return nc
+        except Exception as e:
+            print(f"Failed to connect to NATS server at {nats_url}: {e}")
+            raise
+
+    def read_jetstream():
+        nats_url = "nats://nats:4222"
+        stream_name = "EVENTS"
+        consumer_name = "timeplus_consumer"
+        filter_subject = ""
+        nats_timeout = 10
+
+        print(f"NATS JetStream Read Connector: Connecting to '{nats_url}', stream '{stream_name}', consumer '{consumer_name}'")
+
+        async def _reader_coro():
+            nc = None
+            sub = None
+            try:
+                nc = await _get_nats_connection(nats_url, nats_timeout)
+                js = nc.jetstream()
+
+                # Create or get consumer
+                try:
+                    consumer_config = {
+                        "durable_name": consumer_name,
+                        "deliver_policy": "all",
+                    }
+                    if filter_subject:
+                        consumer_config["filter_subject"] = filter_subject
+
+                    psub = await js.pull_subscribe(
+                        subject=filter_subject if filter_subject else ">",
+                        durable=consumer_name,
+                        stream=stream_name
+                    )
+                    print(f"NATS JetStream Read Connector: Subscribed to stream '{stream_name}' with consumer '{consumer_name}'")
+                except Exception as e:
+                    print(f"Failed to create/get consumer: {e}")
+                    raise
+
+                while True:
+                    try:
+                        # Fetch messages in batches
+                        msgs = await psub.fetch(batch=10, timeout=1.0)
+                        for msg in msgs:
+                            try:
+                                data = msg.data.decode()
+                                metadata = msg.metadata
+                                sequence = metadata.sequence.stream if metadata else 0
+
+                                # Acknowledge the message
+                                await msg.ack()
+
+                                yield (msg.subject, data, sequence, datetime.utcnow())
+                            except Exception as e:
+                                print(f"Error processing JetStream message: {e}")
+                                # Try to nack the message so it can be redelivered
+                                try:
+                                    await msg.nak()
+                                except:
+                                    pass
+                    except nats.js.errors.TimeoutError:
+                        # No messages available, continue polling
+                        if not nc.is_connected:
+                            print("NATS connection lost, attempting to reconnect...")
+                            break
+                        continue
+                    except Exception as e:
+                        print(f"Error fetching messages: {e}")
+                        await asyncio.sleep(1)
+
+            except Exception as e:
+                print(f"NATS JetStream Read Connector main loop error: {e}")
+                raise
+            finally:
+                if nc:
+                    await nc.close()
+                    print(f"NATS JetStream Read Connector: Connection to '{nats_url}' closed.")
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            generator = _reader_coro()
+            while True:
+                try:
+                    item = loop.run_until_complete(generator.__anext__())
+                    yield item
+                except StopAsyncIteration:
+                    break
+        except Exception as e:
+            print(f"NATS JetStream Read Connector caught exception in event loop: {e}")
+            raise
+        finally:
+            loop.close()
+
+  examples:
+    - title: Read Messages from JetStream
+      description: Consume messages from a JetStream stream and display them.
+      code: |
+        SELECT nats_subject, message_data, sequence, received_at
+        FROM nats_jetstream_read_connector;
+
+    - title: Filtered Read from Specific Subject
+      description: Consume messages from a specific subject pattern and filter by content.
+      code: |
+        SELECT nats_subject, message_data, sequence, received_at
+        FROM nats_jetstream_read_connector
+        WHERE message_data ILIKE '%error%';
+
+    - title: Read and Parse JSON Events
+      description: Read JSON events from JetStream, parse them, and aggregate by event type.
+      code: |
+        -- Assuming JetStream messages are JSON like: {"event_type": "order", "user_id": "123", "amount": 99.99}
+        SELECT
+          window_start,
+          message_data:event_type AS event_type,
+          count() AS event_count,
+          sum(message_data:amount::float64) AS total_amount
+        FROM tumble(nats_jetstream_read_connector, received_at, 1m)
+        GROUP BY window_start, event_type;

@@ -127,9 +127,8 @@ spec:
     - title: Publish Simple Messages to NATS
       description: Create a stream and publish messages to the default NATS output subject.
       code: |
-        CREATE STREAM my_output_stream;
-        INSERT INTO my_output_stream(values) VALUES ('Hello NATS from Timeplus!'), ('Another Timeplus message.');
+        INSERT INTO nats-write-connector(message_string) VALUES ('Hello NATS from Timeplus!'), ('Another Timeplus message.');
 
-        -- The 'message_content' column from 'my_output_stream' will be mapped to the 'message_string' input of the connector
-        INSERT INTO nats_write_connector(values)
+        -- The 'message_string' column from 'my_output_stream' will be mapped to the 'message_string' input of the connector
+        INSERT INTO nats_write_connector(message_string)
         SELECT message_content FROM my_output_stream;

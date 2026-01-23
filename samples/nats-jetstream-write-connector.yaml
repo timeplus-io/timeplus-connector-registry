@@ -1,0 +1,191 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: nats-jetstream-write-connector
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: NATS JetStream Write Connector
+  description: |
+    A sink connector to publish Timeplus data as messages to a NATS JetStream stream with guaranteed delivery.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+
+spec:
+  category: sink
+  mode: streaming
+
+  tags:
+    - nats
+    - jetstream
+    - messaging
+    - real-time
+    - pubsub
+    - sink
+
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+
+  dependencies:
+    - nats-py>=2.0.0
+
+  schema:
+    columns:
+      - name: message_string
+        type: string
+        nullable: false
+        description: The string content of the message to be published to JetStream.
+
+  functions:
+    write:
+      name: write_jetstream_messages
+      description: Publishes incoming Timeplus message strings to a NATS JetStream stream.
+
+  configTemplate:
+    - name: nats_url
+      description: The URL of the NATS server.
+      example: nats://nats:4222
+      defaultValue: nats://localhost:4222
+      location: pythonCode
+    - name: stream_name
+      description: The name of the JetStream stream to publish to.
+      example: EVENTS
+      defaultValue: EVENTS
+      location: pythonCode
+    - name: publish_subject
+      description: The subject to publish messages to (must be covered by the stream's subjects).
+      example: events.analytics
+      defaultValue: events.data
+      location: pythonCode
+    - name: nats_timeout
+      description: Timeout in seconds for NATS connection.
+      example: "5"
+      defaultValue: "10"
+      location: pythonCode
+    - name: wait_for_ack
+      description: Whether to wait for JetStream acknowledgment (true for guaranteed delivery).
+      example: "true"
+      defaultValue: "true"
+      location: pythonCode
+
+  pythonCode: |
+    import nats
+    from nats.js import JetStreamContext
+    import asyncio
+    import json
+
+    async def _get_nats_connection(nats_url, nats_timeout):
+        try:
+            nc = await nats.connect(nats_url, connect_timeout=float(nats_timeout))
+            return nc
+        except Exception as e:
+            print(f"Failed to connect to NATS server at {nats_url}: {e}")
+            raise
+
+    def write_jetstream_messages(values):
+        nats_url = "nats://nats-js:4222"
+        stream_name = "EVENTS"
+        publish_subject = "events.data"
+        nats_timeout = 10
+        wait_for_ack = True
+
+        print(f"NATS JetStream Write Connector: Connecting to '{nats_url}', stream '{stream_name}', subject '{publish_subject}'")
+
+        async def _writer_coro():
+            nc = None
+            try:
+                nc = await _get_nats_connection(nats_url, nats_timeout)
+                js = nc.jetstream()
+                print(f"NATS JetStream Write Connector: Connected to '{nats_url}'")
+
+                # Verify stream exists (optional - will fail on publish if it doesn't)
+                try:
+                    stream_info = await js.stream_info(stream_name)
+                    print(f"NATS JetStream Write Connector: Found stream '{stream_name}'")
+                except Exception as e:
+                    print(f"Warning: Could not get stream info for '{stream_name}': {e}")
+
+                # Each row from Timeplus is expected to be a single value (message_string)
+                for row in values:
+                    try:
+                        if not row:
+                            print(f"Warning: Got empty row, skipping.")
+                            continue
+
+                        message_string = row
+                        message_payload = str(message_string).encode('utf-8')
+
+                        if wait_for_ack:
+                            # Publish with acknowledgment for guaranteed delivery
+                            ack = await js.publish(publish_subject, message_payload)
+                            # print(f"Published message to '{publish_subject}', stream sequence: {ack.seq}")
+                        else:
+                            # Publish without waiting for ack (faster but no guarantee)
+                            await js.publish(publish_subject, message_payload)
+                    except Exception as e:
+                        print(f"Error publishing row to JetStream: {e}")
+
+                # Flush to ensure all messages are sent
+                await nc.flush()
+
+            except Exception as e:
+                print(f"NATS JetStream Write Connector main loop error: {e}")
+                raise
+            finally:
+                if nc:
+                    await nc.close()
+                    print(f"NATS JetStream Write Connector: Connection to '{nats_url}' closed.")
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_writer_coro())
+        except Exception as e:
+            print(f"NATS JetStream Write Connector caught exception in event loop: {e}")
+            raise
+        finally:
+            loop.close()
+
+  examples:
+    - title: Publish Messages to JetStream
+      description: Create a stream and publish messages to a JetStream stream with guaranteed delivery.
+      code: |
+        INSERT INTO nats_jetstream_write_connector(message_string) VALUES ('Event 1'), ('Event 2');
+
+        -- Publish messages to JetStream
+        INSERT INTO nats_jetstream_write_connector(message_string)
+        SELECT message_string FROM my_output_stream;
+
+    - title: Publish Aggregated Analytics Results
+      description: Aggregate data and publish results to JetStream for downstream consumers.
+      code: |
+        -- Assuming we have a source stream with sensor data
+        INSERT INTO nats_jetstream_write_connector(message_string)
+        SELECT
+          to_json_string(map(
+            'window', to_string(window_start),
+            'sensor_id', sensor_id,
+            'avg_temp', avg_temp,
+            'max_temp', max_temp
+          )) AS message_string
+        FROM (
+          SELECT
+            window_start,
+            sensor_id,
+            avg(temperature) AS avg_temp,
+            max(temperature) AS max_temp
+          FROM tumble(sensor_stream, timestamp, 1m)
+          GROUP BY window_start, sensor_id
+        );
+
+    - title: Forward Filtered Events to JetStream
+      description: Filter events and forward them to JetStream for persistence and replay.
+      code: |
+        -- Forward only high-priority events to JetStream
+        INSERT INTO nats_jetstream_write_connector(message_string)
+        SELECT event_data
+        FROM event_stream
+        WHERE priority = 'high';
