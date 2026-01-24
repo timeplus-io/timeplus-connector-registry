@@ -2,6 +2,112 @@
 
 This directory contains sample connector.yaml files that can be published to the registry.
 
+## Table of Contents
+- [NATS Connectors](#nats-connectors)
+  - [NATS Core Read/Write](#nats-core-readwrite)
+  - [NATS JetStream Read/Write](#nats-jetstream-readwrite)
+- [Kafka Connectors](#kafka-connectors)
+- [HTTP Webhook](#http-webhook-sink)
+
+## NATS Connectors
+
+### NATS Core Read/Write
+
+Basic NATS pub/sub connectors for real-time messaging.
+
+**Files:**
+- `nats-read-connector.yaml` - Subscribe to NATS subjects
+- `nats-write-connector.yaml` - Publish to NATS subjects
+
+**Setup:**
+```bash
+# The NATS server is already running in docker-compose on port 4222
+
+# Subscribe to messages (in a separate terminal)
+make nats-sub
+
+# Publish test messages
+make nats-pub
+```
+
+**Usage:**
+```sql
+-- Read from NATS
+SELECT nats_subject, message_data, received_at
+FROM nats_read_connector;
+
+-- Write to NATS
+INSERT INTO nats_write_connector(message_string)
+VALUES ('Hello from Timeplus!');
+```
+
+### NATS JetStream Read/Write
+
+NATS JetStream connectors with message persistence, guaranteed delivery, and replay capabilities.
+
+**Files:**
+- `nats-jetstream-read-connector.yaml` - Consume from JetStream streams
+- `nats-jetstream-write-connector.yaml` - Publish to JetStream streams
+
+**Setup:**
+```bash
+# 1. Create the JetStream stream (required before using the connectors)
+make nats-js-stream-create
+
+# 2. Verify the stream was created
+make nats-js-stream-list
+
+# 3. Get detailed stream info
+make nats-js-stream-info
+
+# 4. Publish test messages to JetStream
+make nats-js-stream-pub
+
+# 5. Subscribe to JetStream messages (in a separate terminal)
+make nats-js-stream-sub
+```
+
+**Available Makefile Commands:**
+- `nats-js-stream-create` - Create the EVENTS stream with default configuration
+- `nats-js-stream-list` - List all JetStream streams
+- `nats-js-stream-info` - Get detailed info about the EVENTS stream
+- `nats-js-stream-delete` - Delete the EVENTS stream
+- `nats-js-stream-pub` - Publish a test message to events.data subject
+- `nats-js-stream-sub` - Subscribe to all events.* subjects
+
+**Usage:**
+```sql
+-- Read from JetStream (includes sequence numbers for ordering)
+SELECT nats_subject, message_data, sequence, received_at
+FROM nats_jetstream_read_connector;
+
+-- Write to JetStream with guaranteed delivery
+INSERT INTO nats_jetstream_write_connector(message_string)
+VALUES ('Persistent message in JetStream');
+
+-- Stream processing: read, transform, and write back to JetStream
+INSERT INTO nats_jetstream_write_connector(message_string)
+SELECT
+  to_json_string(map(
+    'subject', nats_subject,
+    'processed_at', to_string(now()),
+    'original_data', message_data
+  )) AS message_string
+FROM nats_jetstream_read_connector
+WHERE message_data ILIKE '%important%';
+```
+
+**Key Differences from NATS Core:**
+- **Persistence**: Messages are stored and can be replayed
+- **Guaranteed Delivery**: Acknowledgment ensures messages aren't lost
+- **Ordering**: Sequence numbers track message order
+- **Durable Consumers**: Maintain position in the stream across restarts
+- **Stream Configuration**: Pre-configured streams with retention policies
+
+---
+
+## Kafka Connectors
+
 ## Kafka JSON Reader
 
 A simple Kafka consumer that reads JSON messages.

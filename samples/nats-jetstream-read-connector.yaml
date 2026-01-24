@@ -4,7 +4,7 @@ kind: Connector
 metadata:
   name: nats-jetstream-read-connector
   namespace: timeplus
-  version: "1.0.0"
+  version: "1.0.3"
   displayName: NATS JetStream Read Connector
   description: |
     A source connector to consume messages from NATS JetStream and stream them into Timeplus.
@@ -98,7 +98,7 @@ spec:
             raise
 
     def read_jetstream():
-        nats_url = "nats://nats:4222"
+        nats_url = "nats://nats-js:4222"
         stream_name = "EVENTS"
         consumer_name = "timeplus_consumer"
         filter_subject = ""
@@ -153,15 +153,24 @@ spec:
                                     await msg.nak()
                                 except:
                                     pass
-                    except nats.js.errors.TimeoutError:
+                    except asyncio.TimeoutError:
                         # No messages available, continue polling
                         if not nc.is_connected:
                             print("NATS connection lost, attempting to reconnect...")
                             break
                         continue
                     except Exception as e:
-                        print(f"Error fetching messages: {e}")
-                        await asyncio.sleep(1)
+                        # Check if it's a timeout-like error (no messages available)
+                        error_msg = str(e).lower()
+                        if 'timeout' in error_msg or 'no messages' in error_msg:
+                            # No messages available, continue polling
+                            if not nc.is_connected:
+                                print("NATS connection lost, attempting to reconnect...")
+                                break
+                            continue
+                        else:
+                            print(f"Error fetching messages: {e}")
+                            await asyncio.sleep(1)
 
             except Exception as e:
                 print(f"NATS JetStream Read Connector main loop error: {e}")
