@@ -1,7 +1,7 @@
 # Timeplus Connector Registry Makefile
 # =====================================
 
-.PHONY: help install dev test lint format typecheck clean \
+.PHONY: help install dev test lint format typecheck clean clean-volumes reset \
         start stop restart build logs shell db-migrate db-shell \
         nats-sub nats-pub nats-js-sub nats-js-pub \
         nats-js-stream-create nats-js-stream-list nats-js-stream-info \
@@ -83,6 +83,18 @@ shell: ## Open shell in API container
 clean: ## Stop services and remove volumes
 	$(COMPOSE) down -v
 	docker rmi registry-api --force 2>/dev/null || true
+
+clean-volumes: ## Remove all docker volumes (for fresh start)
+	$(COMPOSE) down -v --remove-orphans
+	docker volume rm $$(docker volume ls -q --filter name=timeplus-connector-registry) 2>/dev/null || true
+
+reset: ## Full reset: stop, clean volumes, rebuild and start fresh
+	$(COMPOSE) down -v --remove-orphans
+	docker volume rm $$(docker volume ls -q --filter name=timeplus-connector-registry) 2>/dev/null || true
+	docker rmi registry-api --force 2>/dev/null || true
+	docker builder prune -f
+	$(COMPOSE) build --no-cache
+	$(COMPOSE) up -d
 
 ps: ## Show running containers
 	$(COMPOSE) ps
