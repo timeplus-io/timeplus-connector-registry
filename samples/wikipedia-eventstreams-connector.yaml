@@ -1,0 +1,464 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: wikipedia-eventstreams
+  namespace: timeplus
+  version: "1.0.2"
+  displayName: Wikipedia EventStreams Real-Time Connector
+  description: |
+    Streams real-time edit events from Wikipedia and all Wikimedia projects via EventStreams.
+    Uses Server-Sent Events (SSE) protocol for true streaming with no rate limits.
+    
+    Features:
+    - True SSE streaming (~100+ events/second across all Wikimedia projects)
+    - No rate limits, no authentication required
+    - Automatic reconnection with Last-Event-ID support
+    - 31-day historical replay available via `since` parameter
+    - Covers all Wikimedia projects: Wikipedia, Wikidata, Commons, etc.
+    
+    Available Streams:
+    - recentchange: All recent changes (edits, new pages, logs)
+    - revision-create: Every revision/edit
+    - page-create: New page creations
+    - page-delete: Page deletions  
+    - page-move: Page renames/moves
+    
+    Connection Notes:
+    - Connections timeout after ~15 minutes (implement reconnection)
+    - Use Last-Event-ID header to resume from last position
+    - Filter client-side by wiki (server_name) or type
+    
+    Data includes: edit type, user, page title, revision IDs, timestamps,
+    byte changes, comments, bot flags, and more.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+  homepage: https://stream.wikimedia.org
+  documentation: https://wikitech.wikimedia.org/wiki/Event_Platform/EventStreams
+
+spec:
+  category: source
+  mode: streaming
+  
+  tags:
+    - wikipedia
+    - wikimedia
+    - eventstreams
+    - sse
+    - real-time
+    - streaming
+    - edits
+    - open-data
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - requests>=2.28.0
+  
+  schema:
+    columns:
+      - name: id
+        type: int64
+        nullable: true
+        description: Recent change ID
+      - name: type
+        type: string
+        nullable: false
+        description: Type of change (edit, new, log, categorize, external)
+      - name: title
+        type: string
+        nullable: false
+        description: Page title that was changed
+      - name: namespace
+        type: int32
+        nullable: true
+        description: MediaWiki namespace ID (0=article, 1=talk, 2=user, etc.)
+      - name: user
+        type: string
+        nullable: true
+        description: Username who made the change
+      - name: bot
+        type: bool
+        nullable: false
+        description: Whether the edit was made by a bot
+      - name: minor
+        type: bool
+        nullable: false
+        description: Whether the edit was marked as minor
+      - name: patrolled
+        type: bool
+        nullable: false
+        description: Whether the edit has been patrolled
+      - name: comment
+        type: string
+        nullable: true
+        description: Edit summary/comment provided by the user
+      - name: wiki
+        type: string
+        nullable: false
+        description: Wiki identifier (e.g., enwiki, dewiki, wikidatawiki)
+      - name: server_name
+        type: string
+        nullable: false
+        description: Server domain (e.g., en.wikipedia.org, de.wikipedia.org)
+      - name: revision_old
+        type: int64
+        nullable: true
+        description: Previous revision ID
+      - name: revision_new
+        type: int64
+        nullable: true
+        description: New revision ID after the edit
+      - name: length_old
+        type: int32
+        nullable: true
+        description: Page length in bytes before the edit
+      - name: length_new
+        type: int32
+        nullable: true
+        description: Page length in bytes after the edit
+      - name: timestamp
+        type: int64
+        nullable: false
+        description: Unix timestamp of the change
+      - name: meta_dt
+        type: datetime64(3)
+        nullable: false
+        description: ISO timestamp from event metadata
+      - name: meta_domain
+        type: string
+        nullable: true
+        description: Domain from event metadata
+      - name: meta_uri
+        type: string
+        nullable: true
+        description: URI of the changed resource
+      - name: received_at
+        type: datetime64(3)
+        nullable: false
+        description: Timestamp when the connector received the event
+  
+  functions:
+    read:
+      name: read_wikipedia_eventstreams
+      description: Streams real-time changes from Wikipedia EventStreams with automatic reconnection.
+
+  configTemplate:
+    - name: stream_name
+      description: |
+        EventStream to subscribe to. Options: recentchange, revision-create, 
+        page-create, page-delete, page-move. Can combine multiple with commas.
+      example: "recentchange"
+      defaultValue: "recentchange"
+    - name: since
+      description: |
+        ISO timestamp to start streaming from (up to 31 days ago).
+        Leave empty to start from current time. Example: 2025-01-01T00:00:00Z
+      example: ""
+      defaultValue: ""
+
+  pythonCode: |
+    import json
+    import time
+    from datetime import datetime
+    import requests
+
+    def read_wikipedia_eventstreams():
+        # Configuration
+        # Options: recentchange, revision-create, page-create, page-delete, page-move
+        stream_name = "recentchange"
+        since = ""  # ISO timestamp to start from (up to 31 days ago), empty = now
+        
+        base_url = f"https://stream.wikimedia.org/v2/stream/{stream_name}"
+        last_event_id = None
+        
+        while True:
+            try:
+                # Build URL with optional since parameter
+                url = base_url
+                if since and not last_event_id:
+                    url = f"{base_url}?since={since}"
+
+                # Set up headers
+                headers = {
+                    "Accept": "text/event-stream",
+                    "User-Agent": "YourAppName/1.0 (YourEmail@example.com) requests/2.28.1" 
+                }
+
+                # Resume from last position if available
+                if last_event_id:
+                    headers["Last-Event-ID"] = last_event_id
+
+                print(f'Connecting to {url} with Last-Event-ID: {last_event_id}')
+                print(f'Using Headers: {headers}') # For debugging
+
+                with requests.get(url, headers=headers, stream=True, timeout=None) as response:
+                    response.raise_for_status()
+
+                    current_event_data = []
+                    current_event_id = None
+
+                    for line in response.iter_lines(decode_unicode=True):
+                        if line.strip() == "":
+                            if current_event_data:
+                                event_data = "\n".join(current_event_data)
+                                event_type = ""
+                                data_content = ""
+
+                                for item in event_data.split('\n'):
+                                    if item.startswith("event:"):
+                                        event_type = item[len("event:"):].strip()
+                                    elif item.startswith("data:"):
+                                        data_content = item[len("data:"):].strip()
+                                    elif item.startswith("id:"):
+                                        current_event_id = item[len("id:"):].strip()
+
+                                if event_type == "message" and data_content:
+                                    try:
+                                        change = json.loads(data_content)
+                                        # print(f'get one event (id: {current_event_id})') # Keep this for debugging
+
+                                        if current_event_id:
+                                            last_event_id = current_event_id
+
+                                        meta = change.get("meta", {})
+                                        if meta.get("domain") == "canary":
+                                            continue
+                                        
+                                        revision = change.get("revision") or {}
+                                        length = change.get("length") or {}
+
+                                        meta_dt_str = meta.get("dt", "")
+                                        try:
+                                            if meta_dt_str:
+                                                meta_dt_str = meta_dt_str.replace("+00:00", "").replace("Z", "")
+                                                meta_dt = datetime.fromisoformat(meta_dt_str)
+                                            else:
+                                                meta_dt = datetime.utcnow()
+                                        except Exception:
+                                            meta_dt = datetime.utcnow()
+
+                                        # --- START OF FIX: Handle potential None for int64 columns ---
+                                        # Ensure 'id' is an int64 or 0 if None
+                                        event_id = int(change.get("id") or 0) # Cast to int, provide default 0
+
+                                        # Ensure 'revision_old' and 'revision_new' are int64 or 0 if None
+                                        rev_old = int(revision.get("old") or 0)
+                                        rev_new = int(revision.get("new") or 0)
+
+                                        # Ensure 'length_old' and 'length_new' are int32 or 0 if None
+                                        # (Although schema is int32, the same principle applies for consistency)
+                                        len_old = int(length.get("old") or 0)
+                                        len_new = int(length.get("new") or 0)
+
+                                        # 'timestamp' already has a default of 0 in get()
+                                        event_timestamp = int(change.get("timestamp", 0))
+
+                                        # --- END OF FIX ---
+
+                                        yield (
+                                            event_id, # Changed
+                                            change.get("type", ""),
+                                            change.get("title", ""),
+                                            change.get("namespace"),
+                                            change.get("user"),
+                                            change.get("bot", False),
+                                            change.get("minor", False),
+                                            change.get("patrolled", False),
+                                            change.get("comment"),
+                                            change.get("wiki", ""),
+                                            change.get("server_name", ""),
+                                            rev_old, # Changed
+                                            rev_new, # Changed
+                                            len_old, # Changed
+                                            len_new, # Changed
+                                            event_timestamp, # Changed
+                                            meta_dt,
+                                            meta.get("domain"),
+                                            meta.get("uri"),
+                                            datetime.utcnow(),
+                                        )
+
+                                    except json.JSONDecodeError:
+                                        print('JSONDecodeError - skipping event')
+                                        continue
+                                    except Exception as e:
+                                        print(f'Exception in processing event: {e} - skipping event')
+                                        continue
+
+                                current_event_data = []
+                                current_event_id = None
+                            continue
+
+                        current_event_data.append(line.strip())
+
+                print('Stream ended unexpectedly, reconnecting...')
+
+            except requests.exceptions.HTTPError as e:
+                print(f"HTTP Error: {e.response.status_code} - {e.response.text}")
+                time.sleep(10)
+            except requests.exceptions.ConnectionError:
+                print(f'ConnectionError: Lost connection to stream, retrying...')
+                time.sleep(5)
+            except requests.exceptions.Timeout:
+                print(f'Timeout: No data received for a while, reconnecting...')
+                time.sleep(1)
+            except requests.exceptions.RequestException as e:
+                print(f'RequestException: {e}')
+                time.sleep(5)
+            except Exception as e:
+                print(f'General Exception: {e}')
+                time.sleep(5)
+
+  examples:
+    - title: Stream All Wikipedia Changes
+      description: Get real-time feed of all changes across all Wikimedia projects
+      code: |
+        SELECT 
+          meta_dt AS event_time,
+          wiki,
+          type,
+          title,
+          user,
+          CASE WHEN bot THEN 'BOT' ELSE 'HUMAN' END AS editor_type,
+          length_new - length_old AS bytes_changed
+        FROM wikipedia_eventstreams;
+
+    - title: English Wikipedia Edits Only
+      description: Filter for only English Wikipedia article edits
+      code: |
+        SELECT 
+          meta_dt,
+          title,
+          user,
+          comment,
+          length_new - length_old AS bytes_changed,
+          revision_new
+        FROM wikipedia_eventstreams
+        WHERE server_name = 'en.wikipedia.org' 
+          AND type = 'edit'
+          AND namespace = 0;
+
+    - title: Bot vs Human Edit Activity
+      description: Compare bot and human editing activity in 1-minute windows
+      code: |
+        SELECT 
+          window_start,
+          wiki,
+          sum(CASE WHEN bot THEN 1 ELSE 0 END) AS bot_edits,
+          sum(CASE WHEN NOT bot THEN 1 ELSE 0 END) AS human_edits,
+          sum(CASE WHEN bot THEN 1 ELSE 0 END) * 100.0 / count(*) AS bot_percentage
+        FROM tumble(wikipedia_eventstreams, meta_dt, 1m)
+        GROUP BY window_start, wiki
+        ORDER BY bot_edits DESC;
+
+    - title: Most Active Wikis
+      description: Track which Wikimedia projects have the most activity
+      code: |
+        SELECT 
+          window_start,
+          wiki,
+          count(*) AS edit_count,
+          count(DISTINCT user) AS unique_editors
+        FROM tumble(wikipedia_eventstreams, meta_dt, 5m)
+        GROUP BY window_start, wiki
+        ORDER BY edit_count DESC
+        LIMIT 20;
+
+    - title: New Page Creations
+      description: Monitor new articles being created
+      code: |
+        SELECT 
+          meta_dt,
+          wiki,
+          title,
+          user,
+          length_new AS initial_size,
+          comment
+        FROM wikipedia_eventstreams
+        WHERE type = 'new' AND namespace = 0;
+
+    - title: Large Edit Detection
+      description: Detect significant changes (>1000 bytes added or removed)
+      code: |
+        SELECT 
+          meta_dt,
+          wiki,
+          title,
+          user,
+          bot,
+          length_old,
+          length_new,
+          length_new - length_old AS bytes_changed,
+          comment
+        FROM wikipedia_eventstreams
+        WHERE abs(length_new - length_old) > 1000
+          AND type = 'edit';
+
+    - title: Edit Rate Per Second
+      description: Monitor the overall edit rate across Wikipedia
+      code: |
+        SELECT 
+          window_start,
+          count(*) AS events_per_second,
+          sum(CASE WHEN type = 'edit' THEN 1 ELSE 0 END) AS edits,
+          sum(CASE WHEN type = 'new' THEN 1 ELSE 0 END) AS new_pages
+        FROM hop(wikipedia_eventstreams, meta_dt, 1s, 1s)
+        GROUP BY window_start;
+
+    - title: Top Editors by Volume
+      description: Find the most active editors in the last 10 minutes
+      code: |
+        SELECT 
+          user,
+          bot,
+          count(*) AS edit_count,
+          count(DISTINCT wiki) AS wikis_edited,
+          sum(length_new - length_old) AS total_bytes_changed
+        FROM wikipedia_eventstreams
+        WHERE user IS NOT NULL
+        GROUP BY user, bot
+        ORDER BY edit_count DESC
+        LIMIT 20;
+
+    - title: Vandalism Detection (Rapid Reversions)
+      description: Detect potential vandalism by looking for rapid page changes
+      code: |
+        SELECT 
+          window_start,
+          wiki,
+          title,
+          count(*) AS edit_count,
+          count(DISTINCT user) AS unique_editors
+        FROM tumble(wikipedia_eventstreams, meta_dt, 1m)
+        WHERE type = 'edit' AND namespace = 0
+        GROUP BY window_start, wiki, title
+        HAVING count(*) > 3;
+
+    - title: Wikidata Item Changes
+      description: Monitor changes to Wikidata knowledge base items
+      code: |
+        SELECT 
+          meta_dt,
+          title AS item_id,
+          user,
+          comment,
+          bot
+        FROM wikipedia_eventstreams
+        WHERE wiki = 'wikidatawiki'
+          AND namespace = 0
+          AND type = 'edit';
+
+    - title: Latency Monitoring
+      description: Monitor event delivery latency
+      code: |
+        SELECT 
+          window_start,
+          avg(date_diff('second', to_datetime64(timestamp, 0), received_at)) AS avg_latency_sec,
+          max(date_diff('second', to_datetime64(timestamp, 0), received_at)) AS max_latency_sec
+        FROM tumble(wikipedia_eventstreams, received_at, 10s)
+        GROUP BY window_start;

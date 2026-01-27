@@ -98,6 +98,20 @@ services:
     ports:
       - "4223:4222"
 
+  # Jupyter Notebook service
+  jupyter:
+    image: jupyter/scipy-notebook:latest # Or jupyter/datascience-notebook, jupyter/base-notebook
+    container_name: registry-jupyter
+    ports:
+      - "8888:8888" # JupyterLab default port
+    volumes:
+      - ./notebooks:/home/jovyan/work # Mount a local 'notebooks' directory
+    environment:
+      JUPYTER_ENABLE_LAB: "yes" # Enable JupyterLab
+      # Optional: Set a token or password for security
+      # JUPYTER_TOKEN: your-secure-token
+    command: start-notebook.sh --port=8888 --no-browser --allow-root --ip=0.0.0.0 --NotebookApp.token=''
+
 volumes:
   postgres_data:
   timeplus_data:
