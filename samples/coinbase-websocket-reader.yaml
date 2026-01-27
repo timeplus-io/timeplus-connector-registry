@@ -67,12 +67,10 @@ spec:
       description: The URL of the Coinbase WebSocket endpoint.
       example: wss://ws-feed.exchange.coinbase.com
       defaultValue: wss://ws-feed.exchange.coinbase.com
-      location: pythonCode
     - name: subscription_message
       description: The JSON message to send to subscribe to channels/products.
       example: '{"type": "subscribe", "product_ids": ["BTC-USD", "ETH-USD"], "channels": ["level2", "ticker"]}'
       defaultValue: '{"type": "subscribe", "product_ids": ["BTC-USD"], "channels": ["ticker"]}'
-      location: pythonCode
 
   pythonCode: |
     import websocket

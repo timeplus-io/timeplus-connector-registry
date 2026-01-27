@@ -162,15 +162,12 @@ spec:
     - name: bootstrap_servers
       description: Kafka broker addresses
       example: "k1:9092"
-      location: "Line 7 in pythonCode"
     - name: topic
       description: Kafka topic to consume
       example: "py_read"
-      location: "Line 6 in pythonCode"
     - name: group_id
       description: Consumer group ID
       example: "py_kafka_read_probe"
-      location: "Line 9 in pythonCode"
 
   pythonCode: |
     from kafka import KafkaConsumer
@@ -359,7 +356,6 @@ spec:
     - name: webhook_url
       description: Target webhook URL
       example: "https://webhook.site/xxx"
-      location: "Line 5 in pythonCode"
 
   pythonCode: |
     import requests

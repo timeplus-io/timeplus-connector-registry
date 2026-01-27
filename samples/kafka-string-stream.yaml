@@ -55,23 +55,18 @@ spec:
     - name: bootstrap_servers
       description: Kafka broker addresses (comma-separated for multiple brokers)
       example: "localhost:9092"
-      location: "Lines 6 and 22 in pythonCode"
     - name: read_topic
       description: Kafka topic to read from
       example: "input-topic"
-      location: "Line 5 in pythonCode"
     - name: write_topic
       description: Kafka topic to write to
       example: "output-topic"
-      location: "Line 27 in pythonCode"
     - name: group_id
       description: Consumer group ID for offset tracking
       example: "timeplus-consumer-group"
-      location: "Line 9 in pythonCode"
     - name: auto_offset_reset
       description: Where to start consuming if no offset exists (earliest or latest)
       example: "earliest"
-      location: "Line 7 in pythonCode"
 
   pythonCode: |
     from kafka import KafkaConsumer, KafkaProducer

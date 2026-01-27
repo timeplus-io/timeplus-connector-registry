@@ -49,27 +49,22 @@ spec:
       description: The URL of the NATS server.
       example: nats://nats:4222
       defaultValue: nats://localhost:4222
-      location: pythonCode
     - name: stream_name
       description: The name of the JetStream stream to publish to.
       example: EVENTS
       defaultValue: EVENTS
-      location: pythonCode
     - name: publish_subject
       description: The subject to publish messages to (must be covered by the stream's subjects).
       example: events.analytics
       defaultValue: events.data
-      location: pythonCode
     - name: nats_timeout
       description: Timeout in seconds for NATS connection.
       example: "5"
       defaultValue: "10"
-      location: pythonCode
     - name: wait_for_ack
       description: Whether to wait for JetStream acknowledgment (true for guaranteed delivery).
       example: "true"
       defaultValue: "true"
-      location: pythonCode
 
   pythonCode: |
     import nats

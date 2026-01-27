@@ -304,7 +304,6 @@ class ConnectorConfigTemplate(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     example: Mapped[Optional[str]] = mapped_column(Text)
-    location: Mapped[Optional[str]] = mapped_column(Text)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Relationships

@@ -463,7 +463,6 @@ class ConnectorService:
                 name=item.name,
                 description=item.description,
                 example=item.example,
-                location=item.location,
                 position=i,
             )
             self.db.add(config)
@@ -660,7 +659,6 @@ class ConnectorService:
                     "name": c.name,
                     "description": c.description,
                     "example": c.example,
-                    "location": c.location,
                 }
                 for c in sorted(version.config_template, key=lambda x: x.position)
             ],

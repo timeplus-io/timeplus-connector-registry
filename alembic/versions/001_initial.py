@@ -160,7 +160,6 @@ def upgrade() -> None:
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("example", sa.Text(), nullable=True),
-        sa.Column("location", sa.Text(), nullable=True),
         sa.Column("position", sa.Integer(), nullable=False),
         sa.ForeignKeyConstraint(["version_id"], ["connector_versions.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),

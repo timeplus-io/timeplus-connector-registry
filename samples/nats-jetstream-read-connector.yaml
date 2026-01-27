@@ -61,27 +61,22 @@ spec:
       description: The URL of the NATS server.
       example: nats://localhost:4222
       defaultValue: nats://localhost:4222
-      location: pythonCode
     - name: stream_name
       description: The name of the JetStream stream to consume from.
       example: EVENTS
       defaultValue: EVENTS
-      location: pythonCode
     - name: consumer_name
       description: The name of the JetStream consumer (will be created if it doesn't exist).
       example: timeplus_consumer
       defaultValue: timeplus_consumer
-      location: pythonCode
     - name: filter_subject
       description: Optional subject filter for the consumer (empty means all subjects in stream).
       example: events.orders
       defaultValue: ""
-      location: pythonCode
     - name: nats_timeout
       description: Timeout in seconds for NATS connection.
       example: "5"
       defaultValue: "10"
-      location: pythonCode
 
   pythonCode: |
     import nats

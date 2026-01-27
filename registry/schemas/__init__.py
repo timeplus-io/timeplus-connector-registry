@@ -110,7 +110,6 @@ class ConfigTemplateItem(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
     description: Optional[str] = None
     example: Optional[str] = None
-    location: Optional[str] = None
 
 
 class ConfigTemplateItemResponse(BaseSchema):
@@ -119,7 +118,6 @@ class ConfigTemplateItemResponse(BaseSchema):
     name: str
     description: Optional[str]
     example: Optional[str]
-    location: Optional[str]
 
 
 # ============ Dependency ============

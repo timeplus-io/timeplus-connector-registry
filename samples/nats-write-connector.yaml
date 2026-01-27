@@ -49,17 +49,14 @@ spec:
       description: The URL of the NATS server.
       example: nats://nats:4222
       defaultValue: nats://localhost:4222
-      location: pythonCode
     - name: nats_write_subject
       description: The NATS subject to publish data to.
       example: analytics.results
       defaultValue: timeplus.data.out
-      location: pythonCode
     - name: nats_timeout
       description: Timeout in seconds for NATS connection.
       example: "5"
       defaultValue: "10"
-      location: pythonCode
 
   pythonCode: |
     import nats

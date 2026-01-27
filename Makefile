@@ -3,6 +3,7 @@
 
 .PHONY: help install dev test lint format typecheck clean clean-volumes reset \
         start stop restart build logs shell db-migrate db-shell \
+        register-samples \
         nats-sub nats-pub nats-js-sub nats-js-pub \
         nats-js-stream-create nats-js-stream-list nats-js-stream-info \
         nats-js-stream-delete nats-js-stream-pub nats-js-stream-sub
@@ -150,6 +151,11 @@ db-reset: ## Reset database (drop and recreate)
 	docker exec -it $(POSTGRES_CONTAINER) psql -U postgres -c "DROP DATABASE IF EXISTS registry;"
 	docker exec -it $(POSTGRES_CONTAINER) psql -U postgres -c "CREATE DATABASE registry;"
 	$(COMPOSE) exec api alembic upgrade head
+
+##@ Sample Data
+
+register-samples: ## Register all sample connectors (user: timeplus, pass: Password!)
+	./scripts/register_samples.sh
 
 ##@ NATS - Core
 
