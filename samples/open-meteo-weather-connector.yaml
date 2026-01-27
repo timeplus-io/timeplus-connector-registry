@@ -1,0 +1,357 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: open-meteo-weather-connector
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: Open-Meteo Real-Time Weather Connector
+  description: |
+    Streams real-time weather data from Open-Meteo's free weather API.
+    Provides current temperature, humidity, wind, precipitation, and weather conditions
+    for any location worldwide. Updates every 60 seconds to respect API rate limits.
+    
+    Open-Meteo Free Tier Limits:
+    - 10,000 API calls per day
+    - 5,000 API calls per hour  
+    - 600 API calls per minute
+    
+    This connector polls every 60 seconds (1,440 calls/day) to stay well within limits.
+    No API key required for non-commercial use.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+  homepage: https://open-meteo.com
+  documentation: https://open-meteo.com/en/docs
+
+spec:
+  category: source
+  mode: streaming
+  
+  tags:
+    - weather
+    - open-meteo
+    - real-time
+    - temperature
+    - forecast
+    - free-api
+    - streaming
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - requests>=2.28.0
+  
+  schema:
+    columns:
+      - name: latitude
+        type: float64
+        nullable: false
+        description: Latitude of the weather observation location (WGS84)
+      - name: longitude
+        type: float64
+        nullable: false
+        description: Longitude of the weather observation location (WGS84)
+      - name: elevation
+        type: float64
+        nullable: true
+        description: Elevation in meters above sea level
+      - name: timezone
+        type: string
+        nullable: true
+        description: Timezone identifier (e.g., America/Vancouver)
+      - name: observation_time
+        type: datetime64(3)
+        nullable: false
+        description: Time of the weather observation (UTC)
+      - name: temperature_2m
+        type: float64
+        nullable: true
+        description: Air temperature at 2 meters above ground in Celsius
+      - name: relative_humidity_2m
+        type: int32
+        nullable: true
+        description: Relative humidity at 2 meters above ground in percentage
+      - name: apparent_temperature
+        type: float64
+        nullable: true
+        description: Feels-like temperature combining wind chill, humidity and solar radiation in Celsius
+      - name: is_day
+        type: int32
+        nullable: true
+        description: 1 if daylight, 0 if night
+      - name: precipitation
+        type: float64
+        nullable: true
+        description: Precipitation in mm from the preceding interval
+      - name: rain
+        type: float64
+        nullable: true
+        description: Rain in mm from the preceding interval
+      - name: showers
+        type: float64
+        nullable: true
+        description: Showers (convective precipitation) in mm from the preceding interval
+      - name: snowfall
+        type: float64
+        nullable: true
+        description: Snowfall in cm from the preceding interval
+      - name: weather_code
+        type: int32
+        nullable: true
+        description: WMO weather interpretation code (0=Clear, 1-3=Clouds, 45-48=Fog, 51-67=Drizzle/Rain, 71-77=Snow, 80-82=Showers, 95-99=Thunderstorm)
+      - name: cloud_cover
+        type: int32
+        nullable: true
+        description: Total cloud cover as percentage
+      - name: pressure_msl
+        type: float64
+        nullable: true
+        description: Atmospheric pressure at mean sea level in hPa
+      - name: surface_pressure
+        type: float64
+        nullable: true
+        description: Atmospheric pressure at surface level in hPa
+      - name: wind_speed_10m
+        type: float64
+        nullable: true
+        description: Wind speed at 10 meters above ground in km/h
+      - name: wind_direction_10m
+        type: int32
+        nullable: true
+        description: Wind direction at 10 meters above ground in degrees (0-360)
+      - name: wind_gusts_10m
+        type: float64
+        nullable: true
+        description: Wind gusts at 10 meters in km/h
+      - name: received_at
+        type: datetime64(3)
+        nullable: false
+        description: Timestamp when the data was received by the connector
+  
+  functions:
+    read:
+      name: read_open_meteo_weather
+      description: Streams real-time weather data from Open-Meteo API, polling every 60 seconds to respect rate limits.
+
+  configTemplate:
+    - name: latitude
+      description: Latitude of the location (WGS84). Use negative values for Southern hemisphere.
+      example: "49.2827"
+      defaultValue: "49.2827"
+    - name: longitude
+      description: Longitude of the location (WGS84). Use negative values for Western hemisphere.
+      example: "-123.1207"
+      defaultValue: "-123.1207"
+    - name: poll_interval_seconds
+      description: Polling interval in seconds. Minimum 60 to respect API rate limits. Open-Meteo updates models hourly.
+      example: "60"
+      defaultValue: "60"
+    - name: timezone
+      description: Timezone for the location (auto for automatic detection based on coordinates)
+      example: "auto"
+      defaultValue: "auto"
+
+  pythonCode: |
+    import requests
+    import time
+    from datetime import datetime
+
+    def read_open_meteo_weather():
+        # Configuration - modify these values as needed
+        latitude = 49.2827          # Vancouver, BC default
+        longitude = -123.1207       # Use negative for West
+        poll_interval_seconds = 60  # Minimum 60 seconds to respect rate limits
+        timezone = "auto"           # Auto-detect timezone from coordinates
+        
+        # API endpoint and parameters
+        base_url = "https://api.open-meteo.com/v1/forecast"
+        
+        # Current weather variables to fetch
+        current_params = [
+            "temperature_2m",
+            "relative_humidity_2m", 
+            "apparent_temperature",
+            "is_day",
+            "precipitation",
+            "rain",
+            "showers",
+            "snowfall",
+            "weather_code",
+            "cloud_cover",
+            "pressure_msl",
+            "surface_pressure",
+            "wind_speed_10m",
+            "wind_direction_10m",
+            "wind_gusts_10m"
+        ]
+        
+        params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "current": ",".join(current_params),
+            "timezone": timezone,
+            "timeformat": "unixtime"
+        }
+        
+        while True:
+            try:
+                response = requests.get(base_url, params=params, timeout=30)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    current = data.get("current", {})
+                    
+                    # Parse observation time from API response
+                    obs_time_unix = current.get("time")
+                    obs_time = datetime.utcfromtimestamp(obs_time_unix) if obs_time_unix else datetime.utcnow()
+                    
+                    yield (
+                        float(data.get("latitude", latitude)),
+                        float(data.get("longitude", longitude)),
+                        float(data.get("elevation")) if data.get("elevation") is not None else None,
+                        data.get("timezone") or "",
+                        obs_time,
+                        float(current.get("temperature_2m")) if current.get("temperature_2m") is not None else None,
+                        int(current.get("relative_humidity_2m")) if current.get("relative_humidity_2m") is not None else None,
+                        float(current.get("apparent_temperature")) if current.get("apparent_temperature") is not None else None,
+                        int(current.get("is_day")) if current.get("is_day") is not None else None,
+                        float(current.get("precipitation")) if current.get("precipitation") is not None else None,
+                        float(current.get("rain")) if current.get("rain") is not None else None,
+                        float(current.get("showers")) if current.get("showers") is not None else None,
+                        float(current.get("snowfall")) if current.get("snowfall") is not None else None,
+                        int(current.get("weather_code")) if current.get("weather_code") is not None else None,
+                        int(current.get("cloud_cover")) if current.get("cloud_cover") is not None else None,
+                        float(current.get("pressure_msl")) if current.get("pressure_msl") is not None else None,
+                        float(current.get("surface_pressure")) if current.get("surface_pressure") is not None else None,
+                        float(current.get("wind_speed_10m")) if current.get("wind_speed_10m") is not None else None,
+                        int(current.get("wind_direction_10m")) if current.get("wind_direction_10m") is not None else None,
+                        float(current.get("wind_gusts_10m")) if current.get("wind_gusts_10m") is not None else None,
+                        datetime.utcnow(),
+                    )
+                    
+                elif response.status_code == 429:
+                    # Rate limited - back off for 5 minutes
+                    time.sleep(300)
+                else:
+                    # Other error - wait and retry
+                    time.sleep(60)
+                    
+            except requests.exceptions.Timeout:
+                time.sleep(30)
+            except requests.exceptions.RequestException:
+                time.sleep(60)
+            except Exception:
+                time.sleep(60)
+            
+            # Wait for next poll interval
+            time.sleep(poll_interval_seconds)
+
+  examples:
+    - title: Stream Current Weather Data
+      description: Get real-time weather updates for the configured location (default Vancouver, BC)
+      code: |
+        SELECT 
+          observation_time,
+          temperature_2m AS temp_celsius,
+          apparent_temperature AS feels_like,
+          relative_humidity_2m AS humidity_pct,
+          wind_speed_10m AS wind_kmh,
+          weather_code
+        FROM open_meteo_weather_connector;
+
+    - title: Weather Conditions with Human-Readable Descriptions
+      description: Decode WMO weather codes into readable descriptions
+      code: |
+        SELECT 
+          observation_time,
+          temperature_2m,
+          CASE 
+            WHEN weather_code = 0 THEN 'Clear sky'
+            WHEN weather_code IN (1, 2, 3) THEN 'Partly cloudy'
+            WHEN weather_code IN (45, 48) THEN 'Foggy'
+            WHEN weather_code IN (51, 53, 55) THEN 'Drizzle'
+            WHEN weather_code IN (61, 63, 65) THEN 'Rain'
+            WHEN weather_code IN (71, 73, 75) THEN 'Snow'
+            WHEN weather_code IN (80, 81, 82) THEN 'Rain showers'
+            WHEN weather_code IN (95, 96, 99) THEN 'Thunderstorm'
+            ELSE 'Unknown'
+          END AS weather_condition
+        FROM open_meteo_weather_connector;
+
+    - title: Temperature Statistics Over 5-Minute Windows
+      description: Calculate average, min, and max temperature with tumbling window aggregation
+      code: |
+        SELECT 
+          window_start,
+          avg(temperature_2m) AS avg_temp,
+          min(temperature_2m) AS min_temp,
+          max(temperature_2m) AS max_temp,
+          avg(relative_humidity_2m) AS avg_humidity
+        FROM tumble(open_meteo_weather_connector, received_at, 5m)
+        GROUP BY window_start;
+
+    - title: Monitor Precipitation Events
+      description: Filter for any precipitation activity (rain, showers, or snow)
+      code: |
+        SELECT 
+          observation_time,
+          precipitation,
+          rain,
+          showers,
+          snowfall,
+          weather_code
+        FROM open_meteo_weather_connector
+        WHERE precipitation > 0 OR rain > 0 OR showers > 0 OR snowfall > 0;
+
+    - title: Wind Condition Alerts
+      description: Monitor for high wind conditions (wind speed > 30 km/h or gusts > 50 km/h)
+      code: |
+        SELECT 
+          observation_time,
+          wind_speed_10m,
+          wind_gusts_10m,
+          wind_direction_10m
+        FROM open_meteo_weather_connector
+        WHERE wind_speed_10m > 30 OR wind_gusts_10m > 50;
+
+    - title: Day/Night Temperature Comparison
+      description: Analyze temperature differences between day and night
+      code: |
+        SELECT 
+          window_start,
+          is_day,
+          avg(temperature_2m) AS avg_temp,
+          avg(apparent_temperature) AS avg_feels_like
+        FROM tumble(open_meteo_weather_connector, received_at, 1h)
+        GROUP BY window_start, is_day;
+
+    - title: Pressure Trend Analysis
+      description: Monitor atmospheric pressure changes which can indicate weather shifts
+      code: |
+        SELECT 
+          window_start,
+          first(pressure_msl) AS pressure_start,
+          last(pressure_msl) AS pressure_end,
+          last(pressure_msl) - first(pressure_msl) AS pressure_change_hpa
+        FROM tumble(open_meteo_weather_connector, received_at, 1h)
+        GROUP BY window_start;
+
+    - title: Heat Index / Cold Alert
+      description: Alert when apparent temperature differs significantly from actual temperature
+      code: |
+        SELECT 
+          observation_time,
+          temperature_2m AS actual_temp,
+          apparent_temperature AS feels_like,
+          apparent_temperature - temperature_2m AS temp_diff,
+          CASE 
+            WHEN apparent_temperature > temperature_2m + 3 THEN 'Heat stress'
+            WHEN apparent_temperature < temperature_2m - 3 THEN 'Wind chill'
+            ELSE 'Normal'
+          END AS comfort_alert
+        FROM open_meteo_weather_connector
+        WHERE abs(apparent_temperature - temperature_2m) > 3;
