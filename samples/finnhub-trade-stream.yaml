@@ -1,0 +1,339 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: finnhub-trade-stream
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: Finnhub Real-Time Trade Stream
+  description: |
+    Streams real-time trade data from Finnhub WebSocket API.
+    Supports US stocks (15-min delayed on free tier), forex, and cryptocurrency.
+    
+    Features:
+    - Real-time trade streaming via WebSocket
+    - Multi-asset class support (stocks, forex, crypto)
+    - Automatic reconnection and ping/pong handling
+    - Free tier includes 50 WebSocket symbols
+    
+    Free Tier Limits:
+    - 60 REST API calls per minute
+    - 50 WebSocket symbols simultaneously
+    - US stocks: 15-minute delayed quotes
+    - Forex & Crypto: Real-time data
+    - 1 year historical data
+    
+    API Key Required: Yes (free registration at finnhub.io)
+    
+    Symbol Formats:
+    - US Stocks: AAPL, MSFT, GOOGL
+    - Crypto: BINANCE:BTCUSDT, COINBASE:BTC-USD
+    - Forex: OANDA:EUR_USD, IC MARKETS:1
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+  homepage: https://finnhub.io
+  documentation: https://finnhub.io/docs/api/websocket-trades
+
+spec:
+  category: source
+  mode: streaming
+  
+  tags:
+    - finnhub
+    - stocks
+    - forex
+    - crypto
+    - websocket
+    - real-time
+    - market-data
+    - trading
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - websocket-client>=1.4.0
+  
+  schema:
+    columns:
+      - name: symbol
+        type: string
+        nullable: false
+        description: Trading symbol (e.g., AAPL, BINANCE:BTCUSDT, OANDA:EUR_USD)
+      - name: price
+        type: float64
+        nullable: false
+        description: Trade execution price
+      - name: volume
+        type: float64
+        nullable: false
+        description: Trade volume/quantity
+      - name: trade_time
+        type: datetime64(3)
+        nullable: false
+        description: Trade execution timestamp (UNIX milliseconds from Finnhub)
+      - name: trade_conditions
+        type: string
+        nullable: true
+        description: Trade condition codes (comma-separated). See Finnhub docs for code meanings.
+      - name: received_at
+        type: datetime64(3)
+        nullable: false
+        description: Timestamp when the connector received the message
+  
+  functions:
+    read:
+      name: read_finnhub_trades
+      description: Streams real-time trade data from Finnhub WebSocket API with automatic reconnection.
+
+  configTemplate:
+    - name: api_key
+      description: Finnhub API key (get free key at finnhub.io)
+      example: "your_api_key_here"
+      defaultValue: ""
+    - name: symbols
+      description: |
+        Comma-separated list of symbols to subscribe (max 50 on free tier).
+        Formats: Stocks=AAPL, Crypto=BINANCE:BTCUSDT, Forex=OANDA:EUR_USD
+      example: "AAPL,MSFT,BINANCE:BTCUSDT"
+      defaultValue: "AAPL"
+
+  pythonCode: |
+    import websocket
+    import json
+    import time
+    from datetime import datetime
+
+    def read_finnhub_trades():
+        # Configuration - REQUIRED: Set your Finnhub API key
+        api_key = "YOUR_FINNHUB_API_KEY"  # Get free key at https://finnhub.io
+        
+        # Symbols to subscribe (max 50 on free tier)
+        # Formats: Stocks=AAPL, Crypto=BINANCE:BTCUSDT, Forex=OANDA:EUR_USD
+        symbols = "AAPL,MSFT,GOOGL"
+        
+        # Parse symbols
+        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+        
+        # WebSocket URL with API token
+        ws_url = f"wss://ws.finnhub.io?token={api_key}"
+        
+        while True:
+            ws = None
+            try:
+                ws = websocket.create_connection(ws_url, timeout=30)
+                
+                # Subscribe to each symbol
+                for symbol in symbol_list:
+                    subscribe_msg = json.dumps({
+                        "type": "subscribe",
+                        "symbol": symbol
+                    })
+                    ws.send(subscribe_msg)
+                
+                while True:
+                    try:
+                        message = ws.recv()
+                        if not message:
+                            continue
+                        
+                        data = json.loads(message)
+                        msg_type = data.get("type", "")
+                        
+                        # Handle ping messages
+                        if msg_type == "ping":
+                            continue
+                        
+                        # Handle trade messages
+                        if msg_type == "trade":
+                            trades = data.get("data", [])
+                            received_time = datetime.utcnow()
+                            
+                            for trade in trades:
+                                # Extract trade data
+                                symbol = trade.get("s", "")
+                                price = float(trade.get("p", 0))
+                                volume = float(trade.get("v", 0))
+                                timestamp_ms = trade.get("t", 0)
+                                conditions = trade.get("c", [])
+                                
+                                # Convert conditions list to string
+                                conditions_str = ",".join(str(c) for c in conditions) if conditions else ""
+                                
+                                # Convert timestamp
+                                trade_time = datetime.utcfromtimestamp(timestamp_ms / 1000.0) if timestamp_ms else received_time
+                                
+                                yield (
+                                    symbol,
+                                    price,
+                                    volume,
+                                    trade_time,
+                                    conditions_str,
+                                    received_time,
+                                )
+                        
+                        # Handle error messages
+                        elif msg_type == "error":
+                            error_msg = data.get("msg", "Unknown error")
+                            # Log error but continue
+                            continue
+                            
+                    except websocket.WebSocketTimeoutException:
+                        # Timeout is normal, continue listening
+                        continue
+                    except json.JSONDecodeError:
+                        continue
+                        
+            except websocket.WebSocketConnectionClosedException:
+                time.sleep(5)
+            except websocket.WebSocketException:
+                time.sleep(10)
+            except Exception:
+                time.sleep(10)
+            finally:
+                if ws:
+                    try:
+                        # Unsubscribe before closing
+                        for symbol in symbol_list:
+                            try:
+                                ws.send(json.dumps({
+                                    "type": "unsubscribe",
+                                    "symbol": symbol
+                                }))
+                            except Exception:
+                                pass
+                        ws.close()
+                    except Exception:
+                        pass
+            
+            # Brief pause before reconnecting
+            time.sleep(2)
+
+  examples:
+    - title: Stream Stock Trades
+      description: Get real-time trade feed for configured stock symbols
+      code: |
+        SELECT 
+          trade_time,
+          symbol,
+          price,
+          volume,
+          price * volume AS trade_value
+        FROM finnhub_trade_stream
+        WHERE symbol NOT LIKE '%:%';
+
+    - title: Stream Crypto Trades
+      description: Filter for cryptocurrency trades only (symbols contain ':')
+      code: |
+        SELECT 
+          trade_time,
+          symbol,
+          price,
+          volume
+        FROM finnhub_trade_stream
+        WHERE symbol LIKE 'BINANCE:%' OR symbol LIKE 'COINBASE:%';
+
+    - title: VWAP Calculation (1-Minute Windows)
+      description: Calculate Volume Weighted Average Price per symbol
+      code: |
+        SELECT 
+          window_start,
+          symbol,
+          sum(price * volume) / sum(volume) AS vwap,
+          sum(volume) AS total_volume,
+          count(*) AS trade_count
+        FROM tumble(finnhub_trade_stream, trade_time, 1m)
+        GROUP BY window_start, symbol;
+
+    - title: Real-Time Price Tracker
+      description: Track latest price for each symbol
+      code: |
+        SELECT 
+          symbol,
+          last(price) AS last_price,
+          last(trade_time) AS last_trade_time,
+          count(*) AS trades_in_window
+        FROM tumble(finnhub_trade_stream, trade_time, 5s)
+        GROUP BY symbol;
+
+    - title: Large Trade Detection
+      description: Alert on trades with volume above threshold
+      code: |
+        SELECT 
+          trade_time,
+          symbol,
+          price,
+          volume,
+          price * volume AS trade_value,
+          trade_conditions
+        FROM finnhub_trade_stream
+        WHERE volume > 1000;
+
+    - title: Trade Frequency Analysis
+      description: Count trades per second by symbol
+      code: |
+        SELECT 
+          window_start,
+          symbol,
+          count(*) AS trades_per_second,
+          sum(volume) AS volume_per_second,
+          avg(price) AS avg_price
+        FROM hop(finnhub_trade_stream, trade_time, 1s, 1s)
+        GROUP BY window_start, symbol
+        ORDER BY trades_per_second DESC;
+
+    - title: Price Range Statistics
+      description: Calculate OHLC data over 5-minute windows
+      code: |
+        SELECT 
+          window_start,
+          symbol,
+          first(price) AS open_price,
+          max(price) AS high_price,
+          min(price) AS low_price,
+          last(price) AS close_price,
+          sum(volume) AS total_volume
+        FROM tumble(finnhub_trade_stream, trade_time, 5m)
+        GROUP BY window_start, symbol;
+
+    - title: Cross-Asset Comparison
+      description: Compare trading activity across stocks and crypto
+      code: |
+        SELECT 
+          window_start,
+          CASE 
+            WHEN symbol LIKE '%:%' THEN 'CRYPTO'
+            ELSE 'STOCK'
+          END AS asset_class,
+          count(*) AS trade_count,
+          sum(price * volume) AS total_value
+        FROM tumble(finnhub_trade_stream, trade_time, 1m)
+        GROUP BY window_start, asset_class;
+
+    - title: Latency Monitoring
+      description: Monitor data delivery latency from exchange to connector
+      code: |
+        SELECT 
+          window_start,
+          symbol,
+          avg(date_diff('millisecond', trade_time, received_at)) AS avg_latency_ms,
+          max(date_diff('millisecond', trade_time, received_at)) AS max_latency_ms
+        FROM tumble(finnhub_trade_stream, received_at, 10s)
+        GROUP BY window_start, symbol;
+
+    - title: Trade Condition Analysis
+      description: Analyze trades by their condition codes
+      code: |
+        SELECT 
+          window_start,
+          symbol,
+          trade_conditions,
+          count(*) AS trade_count,
+          sum(volume) AS total_volume
+        FROM tumble(finnhub_trade_stream, trade_time, 5m)
+        WHERE trade_conditions != ''
+        GROUP BY window_start, symbol, trade_conditions
+        ORDER BY trade_count DESC;
