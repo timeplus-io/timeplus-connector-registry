@@ -1,0 +1,336 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: bluesky-jetstream-connector
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: Bluesky Jetstream Connector
+  description: |
+    Reads real-time social media data from Bluesky's Jetstream firehose.
+    Jetstream provides a simplified JSON event stream for AT Protocol data,
+    making it easy to consume posts, likes, follows, and other social events
+    from the Bluesky network in real-time.
+    
+    Features:
+    - Real-time streaming of Bluesky events (posts, likes, follows, reposts, etc.)
+    - Configurable collection filtering (e.g., only posts, only likes)
+    - Support for DID filtering to track specific accounts
+    - Automatic reconnection on connection loss
+    - No authentication required for public Jetstream instances
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+
+spec:
+  category: source
+  mode: streaming
+  
+  tags:
+    - websocket
+    - bluesky
+    - social-media
+    - atproto
+    - firehose
+    - real-time
+    - streaming
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - websocket-client>=1.4.0
+  
+  schema:
+    columns:
+      - name: did
+        type: string
+        nullable: false
+        description: The DID (Decentralized Identifier) of the user who performed the action
+      - name: time_us
+        type: int64
+        nullable: false
+        description: Unix timestamp in microseconds when the event occurred
+      - name: kind
+        type: string
+        nullable: false
+        description: Event kind - 'commit', 'identity', or 'account'
+      - name: operation
+        type: string
+        nullable: true
+        description: For commit events - 'create', 'update', or 'delete'
+      - name: collection
+        type: string
+        nullable: true
+        description: The collection type (e.g., 'app.bsky.feed.post', 'app.bsky.feed.like')
+      - name: rkey
+        type: string
+        nullable: true
+        description: Record key - unique identifier for the record within the collection
+      - name: cid
+        type: string
+        nullable: true
+        description: Content ID (CID) of the record
+      - name: record_json
+        type: string
+        nullable: true
+        description: The full record content as JSON string (for create/update operations)
+      - name: raw_event
+        type: string
+        nullable: false
+        description: The complete raw JSON event from Jetstream
+      - name: received_at
+        type: datetime64(3)
+        nullable: false
+        description: Timestamp when the event was received by the connector
+  
+  functions:
+    read:
+      name: read_bluesky_jetstream
+      description: Connects to Bluesky Jetstream WebSocket and yields real-time events
+
+  configTemplate:
+    - name: jetstream_url
+      description: The Jetstream WebSocket endpoint URL
+      example: wss://jetstream2.us-west.bsky.network/subscribe
+      defaultValue: wss://jetstream2.us-west.bsky.network/subscribe
+    - name: wanted_collections
+      description: Comma-separated list of collection NSIDs to filter (empty = all). Examples - app.bsky.feed.post, app.bsky.feed.like, app.bsky.graph.follow
+      example: app.bsky.feed.post,app.bsky.feed.like
+      defaultValue: app.bsky.feed.post
+    - name: wanted_dids
+      description: Comma-separated list of DIDs to filter (empty = all users)
+      example: did:plc:xyz123,did:plc:abc456
+      defaultValue: ""
+
+  pythonCode: |
+    import websocket
+    import json
+    import time
+    from datetime import datetime
+    from urllib.parse import urlencode
+
+    def read_bluesky_jetstream():
+        # Configuration - modify these values as needed
+        jetstream_url = "wss://jetstream2.us-west.bsky.network/subscribe"
+        wanted_collections = "app.bsky.feed.post"  # comma-separated, empty for all
+        wanted_dids = ""  # comma-separated DIDs, empty for all users
+
+        ws = None
+        while True:
+            try:
+                # Build URL with query parameters
+                params = {}
+                if wanted_collections:
+                    for collection in wanted_collections.split(","):
+                        collection = collection.strip()
+                        if collection:
+                            if "wantedCollections" not in params:
+                                params["wantedCollections"] = []
+                            params["wantedCollections"].append(collection)
+                
+                if wanted_dids:
+                    for did in wanted_dids.split(","):
+                        did = did.strip()
+                        if did:
+                            if "wantedDids" not in params:
+                                params["wantedDids"] = []
+                            params["wantedDids"].append(did)
+
+                # Build query string
+                query_parts = []
+                for key, values in params.items():
+                    if isinstance(values, list):
+                        for v in values:
+                            query_parts.append(f"{key}={v}")
+                    else:
+                        query_parts.append(f"{key}={values}")
+                
+                url = jetstream_url
+                if query_parts:
+                    url = f"{jetstream_url}?{'&'.join(query_parts)}"
+
+                ws = websocket.create_connection(url, timeout=30)
+
+                while True:
+                    message = ws.recv()
+                    if not message:
+                        continue
+
+                    received_at = datetime.utcnow()
+                    
+                    try:
+                        event = json.loads(message)
+                    except json.JSONDecodeError:
+                        continue
+
+                    # Extract common fields
+                    did = event.get("did") or ""
+                    time_us = event.get("time_us") or 0
+                    kind = event.get("kind") or ""
+
+                    # Extract commit-specific fields
+                    operation = ""
+                    collection = ""
+                    rkey = ""
+                    cid = ""
+                    record_json = ""
+
+                    if kind == "commit":
+                        commit = event.get("commit") or {}
+                        operation = commit.get("operation") or ""
+                        collection = commit.get("collection") or ""
+                        rkey = commit.get("rkey") or ""
+                        cid = commit.get("cid") or ""
+                        record = commit.get("record")
+                        if record:
+                            record_json = json.dumps(record)
+
+                    yield (
+                        did,
+                        time_us,
+                        kind,
+                        operation,
+                        collection,
+                        rkey,
+                        cid,
+                        record_json,
+                        message,
+                        received_at,
+                    )
+
+            except websocket.WebSocketConnectionClosedException:
+                time.sleep(5)
+            except websocket.WebSocketTimeoutException:
+                time.sleep(1)
+            except Exception:
+                time.sleep(5)
+            finally:
+                if ws:
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+                    ws = None
+            time.sleep(1)
+
+  examples:
+    - title: Stream All Posts from Bluesky
+      description: Get all new posts as they are created on Bluesky
+      code: |
+        SELECT 
+          did,
+          to_datetime64(time_us / 1000000, 3) as event_time,
+          collection,
+          record_json:text as post_text,
+          record_json:createdAt as created_at,
+          received_at
+        FROM bluesky_jetstream_connector
+        WHERE kind = 'commit' AND operation = 'create' AND collection = 'app.bsky.feed.post';
+
+    - title: Count Posts Per Second
+      description: Real-time counter of posts being created on Bluesky
+      code: |
+        SELECT 
+          window_start,
+          count(*) as posts_per_second
+        FROM tumble(bluesky_jetstream_connector, received_at, 1s)
+        WHERE kind = 'commit' AND operation = 'create' AND collection = 'app.bsky.feed.post'
+        GROUP BY window_start;
+
+    - title: Track Likes Activity
+      description: Monitor like events with subject details
+      code: |
+        SELECT 
+          did as liker_did,
+          record_json:subject:uri as liked_post_uri,
+          record_json:createdAt as liked_at,
+          received_at
+        FROM bluesky_jetstream_connector
+        WHERE collection = 'app.bsky.feed.like' AND operation = 'create';
+
+    - title: Follow Graph Changes
+      description: Track new follows and unfollows in real-time
+      code: |
+        SELECT 
+          did as follower_did,
+          operation,
+          record_json:subject as followed_did,
+          received_at
+        FROM bluesky_jetstream_connector
+        WHERE collection = 'app.bsky.graph.follow';
+
+    - title: Post Volume by 5-Second Windows
+      description: Aggregate post counts over 5-second tumbling windows
+      code: |
+        SELECT 
+          window_start,
+          window_end,
+          count(*) as post_count,
+          count(distinct did) as unique_posters
+        FROM tumble(bluesky_jetstream_connector, received_at, 5s)
+        WHERE kind = 'commit' AND collection = 'app.bsky.feed.post' AND operation = 'create'
+        GROUP BY window_start, window_end;
+
+    - title: Detect High-Activity Users
+      description: Find users posting more than 3 times in a minute
+      code: |
+        SELECT 
+          did,
+          count(*) as post_count
+        FROM tumble(bluesky_jetstream_connector, received_at, 1m)
+        WHERE kind = 'commit' AND collection = 'app.bsky.feed.post' AND operation = 'create'
+        GROUP BY did
+        HAVING count(*) > 3;
+
+    - title: Monitor Account Status Changes
+      description: Track account activations, deactivations, and takedowns
+      code: |
+        SELECT 
+          did,
+          kind,
+          raw_event:account:active as is_active,
+          raw_event:account:status as status,
+          received_at
+        FROM bluesky_jetstream_connector
+        WHERE kind = 'account';
+
+    - title: Extract Posts with Images
+      description: Find posts that contain embedded images
+      code: |
+        SELECT 
+          did,
+          record_json:text as post_text,
+          record_json:embed:$type as embed_type,
+          received_at
+        FROM bluesky_jetstream_connector
+        WHERE kind = 'commit' 
+          AND collection = 'app.bsky.feed.post' 
+          AND operation = 'create'
+          AND record_json:embed:$type LIKE '%image%';
+
+    - title: Repost Tracking
+      description: Monitor reposts in real-time
+      code: |
+        SELECT 
+          did as reposter_did,
+          record_json:subject:uri as original_post_uri,
+          record_json:createdAt as reposted_at,
+          received_at
+        FROM bluesky_jetstream_connector
+        WHERE collection = 'app.bsky.feed.repost' AND operation = 'create';
+
+    - title: Full Event Stream with Parsed Timestamp
+      description: Stream all events with human-readable timestamps
+      code: |
+        SELECT 
+          did,
+          to_datetime64(time_us / 1000000, 3) as event_time,
+          kind,
+          operation,
+          collection,
+          rkey,
+          received_at
+        FROM bluesky_jetstream_connector;
