@@ -1,0 +1,306 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: binance-trade-stream
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: Binance Real-Time Trade Stream
+  description: |
+    Streams real-time trade data from Binance WebSocket API.
+    Provides live trade execution data including price, quantity, and trade direction
+    for any trading pair on Binance spot market.
+    
+    Features:
+    - Real-time trade data with sub-second latency
+    - No API key required for public market data
+    - Automatic reconnection on disconnect (24-hour limit)
+    - Automatic ping/pong handling for connection keep-alive
+    
+    Rate Limits (per Binance documentation):
+    - 5 incoming messages/second per WebSocket
+    - 300 connections per 5 minutes per IP
+    - 1,024 streams per connection
+    - Connections auto-disconnect after 24 hours
+    
+    This is production-ready for crypto streaming analytics.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+  homepage: https://developers.binance.com
+  documentation: https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams
+
+spec:
+  category: source
+  mode: streaming
+  
+  tags:
+    - binance
+    - crypto
+    - trading
+    - websocket
+    - real-time
+    - market-data
+    - bitcoin
+    - ethereum
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - websocket-client>=1.4.0
+  
+  schema:
+    columns:
+      - name: event_type
+        type: string
+        nullable: false
+        description: Event type (always 'trade' for this stream)
+      - name: event_time
+        type: datetime64(3)
+        nullable: false
+        description: Event timestamp from Binance
+      - name: symbol
+        type: string
+        nullable: false
+        description: Trading pair symbol (e.g., BTCUSDT, ETHUSDT)
+      - name: trade_id
+        type: int64
+        nullable: false
+        description: Unique trade ID
+      - name: price
+        type: float64
+        nullable: false
+        description: Trade execution price
+      - name: quantity
+        type: float64
+        nullable: false
+        description: Trade quantity in base asset
+      - name: quote_quantity
+        type: float64
+        nullable: false
+        description: Trade quantity in quote asset (price * quantity)
+      - name: trade_time
+        type: datetime64(3)
+        nullable: false
+        description: Trade execution timestamp
+      - name: is_buyer_maker
+        type: bool
+        nullable: false
+        description: True if buyer is market maker (i.e., seller is taker/aggressor)
+      - name: received_at
+        type: datetime64(3)
+        nullable: false
+        description: Timestamp when the connector received the message
+  
+  functions:
+    read:
+      name: read_binance_trades
+      description: Streams real-time trade data from Binance WebSocket API with automatic reconnection.
+
+  configTemplate:
+    - name: symbols
+      description: Comma-separated list of trading pair symbols in lowercase (e.g., btcusdt,ethusdt,bnbusdt)
+      example: "btcusdt"
+      defaultValue: "btcusdt"
+    - name: websocket_base_url
+      description: Binance WebSocket base URL
+      example: "wss://stream.binance.com:9443"
+      defaultValue: "wss://stream.binance.com:9443"
+
+  pythonCode: |
+    import websocket
+    import json
+    import time
+    from datetime import datetime
+
+    def read_binance_trades():
+        # Configuration - modify these values as needed
+        symbols = "btcusdt"  # Comma-separated: "btcusdt,ethusdt,bnbusdt"
+        websocket_base_url = "wss://stream.binance.com:9443"
+        
+        # Parse symbols and create stream names
+        symbol_list = [s.strip().lower() for s in symbols.split(",")]
+        
+        # Build WebSocket URL for combined streams
+        if len(symbol_list) == 1:
+            ws_url = f"{websocket_base_url}/ws/{symbol_list[0]}@trade"
+        else:
+            streams = "/".join([f"{s}@trade" for s in symbol_list])
+            ws_url = f"{websocket_base_url}/stream?streams={streams}"
+        
+        is_combined = len(symbol_list) > 1
+        
+        while True:
+            ws = None
+            try:
+                ws = websocket.create_connection(
+                    ws_url,
+                    timeout=30,
+                    ping_interval=20,
+                    ping_timeout=10
+                )
+                
+                while True:
+                    try:
+                        message = ws.recv()
+                        if not message:
+                            continue
+                        
+                        data = json.loads(message)
+                        
+                        # Handle combined stream format
+                        if is_combined and "stream" in data:
+                            trade = data.get("data", {})
+                        else:
+                            trade = data
+                        
+                        # Skip non-trade messages (ping/pong handled by websocket-client)
+                        if trade.get("e") != "trade":
+                            continue
+                        
+                        # Parse trade data
+                        event_time_ms = trade.get("E", 0)
+                        trade_time_ms = trade.get("T", 0)
+                        price = float(trade.get("p", "0"))
+                        quantity = float(trade.get("q", "0"))
+                        
+                        yield (
+                            trade.get("e", "trade"),                                    # event_type
+                            datetime.utcfromtimestamp(event_time_ms / 1000.0),         # event_time
+                            trade.get("s", "").upper(),                                 # symbol
+                            int(trade.get("t", 0)),                                     # trade_id
+                            price,                                                      # price
+                            quantity,                                                   # quantity
+                            price * quantity,                                           # quote_quantity
+                            datetime.utcfromtimestamp(trade_time_ms / 1000.0),         # trade_time
+                            trade.get("m", False),                                      # is_buyer_maker
+                            datetime.utcnow(),                                          # received_at
+                        )
+                        
+                    except websocket.WebSocketTimeoutException:
+                        # Send ping to keep connection alive
+                        try:
+                            ws.ping()
+                        except Exception:
+                            break
+                    except json.JSONDecodeError:
+                        continue
+                        
+            except websocket.WebSocketConnectionClosedException:
+                # Connection closed (possibly 24-hour limit), reconnect
+                time.sleep(1)
+            except websocket.WebSocketException:
+                time.sleep(5)
+            except Exception:
+                time.sleep(5)
+            finally:
+                if ws:
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
+            
+            # Brief pause before reconnecting
+            time.sleep(1)
+
+  examples:
+    - title: Stream BTC/USDT Trades
+      description: Get real-time trade feed for Bitcoin/USDT pair
+      code: |
+        SELECT 
+          trade_time,
+          symbol,
+          price,
+          quantity,
+          quote_quantity,
+          CASE WHEN is_buyer_maker THEN 'SELL' ELSE 'BUY' END AS trade_side
+        FROM binance_trade_stream;
+
+    - title: Real-Time VWAP (Volume Weighted Average Price)
+      description: Calculate VWAP over 1-minute tumbling windows
+      code: |
+        SELECT 
+          window_start,
+          symbol,
+          sum(quote_quantity) / sum(quantity) AS vwap,
+          sum(quantity) AS total_volume,
+          count(*) AS trade_count
+        FROM tumble(binance_trade_stream, trade_time, 1m)
+        GROUP BY window_start, symbol;
+
+    - title: Trade Flow Analysis (Buy vs Sell Pressure)
+      description: Analyze buying vs selling pressure in 30-second windows
+      code: |
+        SELECT 
+          window_start,
+          symbol,
+          sum(CASE WHEN NOT is_buyer_maker THEN quote_quantity ELSE 0 END) AS buy_volume,
+          sum(CASE WHEN is_buyer_maker THEN quote_quantity ELSE 0 END) AS sell_volume,
+          sum(CASE WHEN NOT is_buyer_maker THEN quote_quantity ELSE 0 END) - 
+          sum(CASE WHEN is_buyer_maker THEN quote_quantity ELSE 0 END) AS net_flow
+        FROM tumble(binance_trade_stream, trade_time, 30s)
+        GROUP BY window_start, symbol;
+
+    - title: Large Trade Detection (Whale Alerts)
+      description: Detect trades larger than $10,000 in value
+      code: |
+        SELECT 
+          trade_time,
+          symbol,
+          price,
+          quantity,
+          quote_quantity AS trade_value_usd,
+          CASE WHEN is_buyer_maker THEN 'SELL' ELSE 'BUY' END AS trade_side
+        FROM binance_trade_stream
+        WHERE quote_quantity > 10000;
+
+    - title: Price Statistics per Window
+      description: Calculate OHLC and statistics over 5-minute windows
+      code: |
+        SELECT 
+          window_start,
+          symbol,
+          first(price) AS open_price,
+          max(price) AS high_price,
+          min(price) AS low_price,
+          last(price) AS close_price,
+          max(price) - min(price) AS price_range,
+          count(*) AS trade_count,
+          sum(quantity) AS volume
+        FROM tumble(binance_trade_stream, trade_time, 5m)
+        GROUP BY window_start, symbol;
+
+    - title: Trade Frequency Analysis
+      description: Monitor trades per second with hop windows
+      code: |
+        SELECT 
+          window_start,
+          symbol,
+          count(*) AS trades_per_second,
+          sum(quote_quantity) AS volume_per_second
+        FROM hop(binance_trade_stream, trade_time, 1s, 1s)
+        GROUP BY window_start, symbol;
+
+    - title: Moving Average Price
+      description: Calculate 20-trade simple moving average price
+      code: |
+        SELECT 
+          trade_time,
+          symbol,
+          price,
+          avg(price) OVER (PARTITION BY symbol ORDER BY trade_time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS sma_20
+        FROM binance_trade_stream;
+
+    - title: Latency Monitoring
+      description: Monitor data delivery latency (exchange to connector)
+      code: |
+        SELECT 
+          window_start,
+          avg(date_diff('millisecond', trade_time, received_at)) AS avg_latency_ms,
+          max(date_diff('millisecond', trade_time, received_at)) AS max_latency_ms,
+          min(date_diff('millisecond', trade_time, received_at)) AS min_latency_ms
+        FROM tumble(binance_trade_stream, received_at, 10s)
+        GROUP BY window_start;
