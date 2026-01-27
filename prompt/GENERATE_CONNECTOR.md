@@ -65,11 +65,11 @@ spec:
     - name: <config_name>
       description: <what to configure>
       example: <example_value>
-      location: <where in code>
 
   pythonCode: |
     # For SOURCE - yield rows as lists:
     def read_func():
+        config_parameter = default_value
         client = setup_client()
         try:
             for item in client.stream():
@@ -79,6 +79,7 @@ spec:
     
     # For SINK - receive iterator of row lists:
     def write_func(values):
+        config_parameter = default_value
         client = setup_client()
         try:
             for row in values: 
@@ -93,22 +94,8 @@ spec:
         <SQL example>
 ```
 
-###
-The schema definition in the CREATE EXTERNAL STREAM statement should reflect the output columns of the connector's read function, not its configuration parameters. The configuration parameters are passed directly to the timeplus_builtin.connector_name() function call in the INSERT INTO ... SELECT ... FROM statement.
-
-### Common Dependencies:
-| System | Package |
-|--------|---------|
-| Kafka | `kafka-python>=2.0.2` |
-| HTTP/REST | `requests>=2.28.0` |
-| PostgreSQL | `psycopg2-binary>=2.9.0` |
-| MySQL | `mysql-connector-python>=8.0.0` |
-| MongoDB | `pymongo>=4.0.0` |
-| Redis | `redis>=4.0.0` |
-| AWS S3 | `boto3>=1.26.0` |
-| Elasticsearch | `elasticsearch>=8.0.0` |
-| MQTT | `paho-mqtt>=1.6.0` |
-| WebSocket | `websocket-client>=1.4.0` |
+### Schema
+The schema definition in the CREATE EXTERNAL STREAM statement should reflect the output columns of the connector's read function, not its configuration parameters. The configuration parameters are hard coded in the python code now
 
 ### Rules:
 1. Always use `try/finally` to cleanup resources
