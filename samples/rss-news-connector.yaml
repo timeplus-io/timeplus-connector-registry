@@ -1,0 +1,177 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: rss-news-stream
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: RSS News Stream (Staggered)
+  description: |
+    Real-time news aggregator from multiple RSS feeds.
+    Uses staggered polling for more frequent data availability.
+    Each feed is polled every 60s, but data arrives every 15s.
+    Includes entry_id + source as composite unique key.
+  authors:
+    - name: Timeplus Dev
+      email: dev@timeplus.com
+  license: Apache-2.0
+
+spec:
+  category: source
+  mode: streaming
+  
+  tags:
+    - rss
+    - news
+    - real-time
+    - aggregator
+  
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+  
+  dependencies:
+    - feedparser>=6.0.0
+  
+  schema:
+    columns:
+      - name: entry_id
+        type: string
+        nullable: false
+        description: Unique identifier for this entry (GUID or link hash)
+      - name: source
+        type: string
+        nullable: false
+        description: News source name
+      - name: title
+        type: string
+        nullable: false
+        description: Article headline
+      - name: link
+        type: string
+        nullable: false
+        description: URL to full article
+      - name: summary
+        type: string
+        nullable: true
+        description: Article summary/description
+      - name: published_at
+        type: datetime64(3)
+        nullable: true
+        description: When the article was published
+      - name: fetched_at
+        type: datetime64(3)
+        nullable: false
+        description: When we received this article
+  
+  functions:
+    read:
+      name: read_rss_news
+      description: Stream deduplicated news articles from RSS feeds with staggered polling
+
+  configTemplate:
+    - name: feed_urls
+      description: List of RSS feed URLs to monitor
+      example: "https://rss.cnn.com/rss/edition.rss,https://feeds.bbci.co.uk/news/rss.xml"
+    - name: per_feed_interval
+      description: Seconds between each feed poll (total cycle = per_feed_interval * num_feeds)
+      example: "15"
+
+  pythonCode: |
+    import feedparser
+    import time
+    import hashlib
+    from datetime import datetime
+    from time import mktime
+
+    def read_rss_news():
+        # Configuration
+        feed_urls = [
+            "https://rss.cnn.com/rss/edition.rss",
+            "https://feeds.bbci.co.uk/news/rss.xml",
+            "https://techcrunch.com/feed/",
+            "https://news.ycombinator.com/rss",
+        ]
+        per_feed_interval = 15  # seconds between each feed
+        
+        seen_ids = set()
+        current_feed_index = 0
+        
+        while True:
+            url = feed_urls[current_feed_index]
+            
+            try:
+                feed = feedparser.parse(url)
+                source_name = feed.feed.get('title', url)
+                
+                for entry in feed.entries:
+                    # Generate stable entry_id
+                    raw_id = entry.get('id') or entry.get('link', '')
+                    if not raw_id:
+                        continue
+                    
+                    # Create a short hash for cleaner IDs (optional)
+                    entry_id = hashlib.md5(raw_id.encode()).hexdigest()[:16]
+                    
+                    # Composite key for deduplication
+                    composite_key = f"{source_name}:{entry_id}"
+                    
+                    if composite_key not in seen_ids:
+                        seen_ids.add(composite_key)
+                        
+                        # Parse published date
+                        published_at = None
+                        if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                            published_at = datetime.fromtimestamp(mktime(entry.published_parsed))
+                        
+                        yield (
+                            entry_id,
+                            source_name,
+                            entry.get('title', ''),
+                            entry.get('link', ''),
+                            entry.get('summary', ''),
+                            published_at,
+                            datetime.utcnow(),
+                        )
+            except Exception:
+                pass
+            
+            current_feed_index = (current_feed_index + 1) % len(feed_urls)
+            
+            if len(seen_ids) > 100000:
+                seen_ids.clear()
+            
+            time.sleep(per_feed_interval)
+
+  examples:
+    - title: Stream All News
+      description: Get real-time news from all configured sources
+      code: |
+        SELECT * FROM rss_news_stream;
+    
+    - title: Deduplicate After Restart
+      description: Use entry_id + source to dedupe in a materialized view
+      code: |
+        CREATE MATERIALIZED VIEW news_deduped AS
+        SELECT *
+        FROM rss_news_stream
+        WHERE (entry_id, source) NOT IN (
+          SELECT entry_id, source FROM news_archive
+        );
+    
+    - title: Lookup Specific Article
+      description: Find article by its unique key
+      code: |
+        SELECT * FROM rss_news_stream
+        WHERE entry_id = 'a1b2c3d4e5f67890'
+          AND source = 'BBC News';
+    
+    - title: Count Unique Articles by Source
+      description: Verify no duplicates per source
+      code: |
+        SELECT 
+          source,
+          count(*) as total,
+          count(DISTINCT entry_id) as unique_articles
+        FROM tumble(rss_news_stream, fetched_at, 5m)
+        GROUP BY source;
