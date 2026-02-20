@@ -38,17 +38,6 @@ services:
         uvicorn registry.main:app --host 0.0.0.0 --port 8000
       "
 
-  # UI served by nginx
-  ui:
-    image: nginx:alpine
-    container_name: registry-ui
-    ports:
-      - "3000:80"
-    volumes:
-      - ./ui:/usr/share/nginx/html:ro
-    depends_on:
-      - api
-
   timeplus:
     image: timeplus/timeplusd:3.0.3-rc.32
     platform: linux/amd64
@@ -60,6 +49,7 @@ services:
       - ENABLE_DATA_PREALLOCATE=false
     volumes:
       - timeplus_data:/var/lib/timeplusd/
+      - ./config/timeplusd-users.yaml:/etc/timeplusd-server/users.yaml:ro
 
   redpanda:
     image: redpandadata/redpanda:v23.3.4
