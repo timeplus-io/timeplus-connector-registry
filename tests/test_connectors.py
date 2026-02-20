@@ -4,6 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from registry.main import app
+from registry.database import init_db, close_db
 from registry.utils import parse_manifest, generate_install_sql
 
 
@@ -182,56 +183,54 @@ class TestSQLGeneration:
         assert "CREATE EXTERNAL STREAM my_custom_stream" in sql
 
 
+@pytest.fixture(scope="session", autouse=True)
+async def setup_database():
+    """Initialize database for tests."""
+    await init_db()
+    yield
+    await close_db()
+
+
+@pytest.fixture
+async def client():
+    """Get async client for testing."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test"
+    ) as client:
+        yield client
+
+
 @pytest.mark.asyncio
 class TestConnectorAPI:
     """Test connector API endpoints."""
 
-    async def test_health_check(self):
+    async def test_health_check(self, client):
         """Test health check endpoint."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            response = await client.get("/health")
-        
+        response = await client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
 
-    async def test_list_connectors_empty(self):
+    async def test_list_connectors_empty(self, client):
         """Test listing connectors when empty."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            response = await client.get("/api/v1/connectors")
-        
+        response = await client.get("/api/v1/connectors")
         assert response.status_code == 200
         data = response.json()
         assert "data" in data
         assert "pagination" in data
 
-    async def test_connector_not_found(self):
+    async def test_connector_not_found(self, client):
         """Test getting non-existent connector."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            response = await client.get("/api/v1/connectors/nonexistent/connector")
-        
+        response = await client.get("/api/v1/connectors/nonexistent/connector")
         assert response.status_code == 404
 
-    async def test_publish_requires_auth(self):
+    async def test_publish_requires_auth(self, client):
         """Test that publishing requires authentication."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            response = await client.post(
-                "/api/v1/connectors",
-                content=SAMPLE_MANIFEST,
-                headers={"Content-Type": "application/x-yaml"},
-            )
-        
+        response = await client.post(
+            "/api/v1/connectors",
+            content=SAMPLE_MANIFEST,
+            headers={"Content-Type": "application/x-yaml"},
+        )
         assert response.status_code == 401
 
 
@@ -239,39 +238,28 @@ class TestConnectorAPI:
 class TestPublisherAPI:
     """Test publisher API endpoints."""
 
-    async def test_register_publisher(self):
+    async def test_register_publisher(self, client):
         """Test publisher registration."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            response = await client.post(
-                "/api/v1/register",
-                json={
-                    "namespace": "testpub",
-                    "display_name": "Test Publisher",
-                    "email": "test@example.com",
-                    "password": "securepassword123",
-                },
-            )
-        
-        # Note: This will fail without a database connection
-        # In a real test, you'd use a test database
-        assert response.status_code in [201, 500]  # 500 if no DB
+        response = await client.post(
+            "/api/v1/register",
+            json={
+                "namespace": "testpub",
+                "display_name": "Test Publisher",
+                "email": "test@example.com",
+                "password": "securepassword123",
+            },
+        )
+        # Note: This should pass now with SQLite database correctly initialized
+        assert response.status_code == 201
 
-    async def test_login_invalid_credentials(self):
+    async def test_login_invalid_credentials(self, client):
         """Test login with invalid credentials."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            response = await client.post(
-                "/api/v1/login",
-                json={
-                    "namespace": "nonexistent",
-                    "password": "wrongpassword",
-                },
-            )
-        
-        # Will be 401 (unauthorized) or 500 (no DB)
-        assert response.status_code in [401, 500]
+        response = await client.post(
+            "/api/v1/login",
+            json={
+                "namespace": "nonexistent",
+                "password": "wrongpassword",
+            },
+        )
+        # Should be 401 (unauthorized)
+        assert response.status_code == 401

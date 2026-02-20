@@ -3,7 +3,9 @@
 
 .PHONY: help install dev test lint format typecheck clean clean-volumes reset \
         start stop restart build logs shell db-migrate db-shell \
-        register-samples \
+        register-publisher register-samples \
+        sqlite-shell \
+        docker-build docker-push docker-release \
         nats-sub nats-pub nats-js-sub nats-js-pub \
         nats-js-stream-create nats-js-stream-list nats-js-stream-info \
         nats-js-stream-delete nats-js-stream-pub nats-js-stream-sub
@@ -19,10 +21,14 @@ NC := \033[0m # No Color
 # Configuration
 COMPOSE := docker compose
 API_CONTAINER := registry-api
-POSTGRES_CONTAINER := registry-postgres
+DB_PATH := ./data/registry.db
 NATS_HOST := host.docker.internal
 NATS_PORT := 4222
 NATS_JS_PORT := 4223
+
+# Docker Registry Configuration
+DOCKER_REPO := timeplus/connector-registry
+VERSION := $(shell grep "^version =" pyproject.toml | cut -d '"' -f 2)
 
 #------------------------------------------------------------------------------
 # Help
@@ -43,7 +49,7 @@ help: ## Show this help message
 install: ## Install package in development mode with dev dependencies
 	pip install -e ".[dev]"
 
-dev: ## Run development server locally (requires local postgres)
+dev: ## Run development server locally
 	uvicorn registry.main:app --reload --host 0.0.0.0 --port 8000
 
 run: ## Run server locally (production mode)
@@ -100,6 +106,19 @@ reset: ## Full reset: stop, clean volumes, rebuild and start fresh
 ps: ## Show running containers
 	$(COMPOSE) ps
 
+##@ Docker Release
+
+docker-build: ## Build Docker image with version and latest tags
+	@echo "$(BLUE)Building docker image $(DOCKER_REPO):$(VERSION)...$(NC)"
+	docker build -t $(DOCKER_REPO):$(VERSION) -t $(DOCKER_REPO):latest .
+
+docker-push: ## Push Docker image tags to Docker Hub
+	@echo "$(BLUE)Pushing docker image $(DOCKER_REPO):$(VERSION)...$(NC)"
+	docker push $(DOCKER_REPO):$(VERSION)
+	docker push $(DOCKER_REPO):latest
+
+docker-release: docker-build docker-push ## Build and push Docker image in one step
+
 ##@ Testing
 
 test: ## Run tests
@@ -135,6 +154,9 @@ ci: format lint typecheck test ## Run full CI pipeline (format, lint, typecheck,
 
 ##@ Database
 
+sqlite-shell: ## Open SQLite shell
+	sqlite3 $(DB_PATH)
+
 db-migrate: ## Run database migrations
 	alembic upgrade head
 
@@ -144,15 +166,22 @@ db-downgrade: ## Rollback last migration
 db-history: ## Show migration history
 	alembic history
 
-db-shell: ## Open PostgreSQL shell
-	docker exec -it $(POSTGRES_CONTAINER) psql -U postgres -d registry
-
-db-reset: ## Reset database (drop and recreate)
-	docker exec -it $(POSTGRES_CONTAINER) psql -U postgres -c "DROP DATABASE IF EXISTS registry;"
-	docker exec -it $(POSTGRES_CONTAINER) psql -U postgres -c "CREATE DATABASE registry;"
-	$(COMPOSE) exec api alembic upgrade head
+db-reset: ## Reset database (delete registry.db)
+	rm -f $(DB_PATH)
+	@echo "Database reset. It will be recreated on next app start."
 
 ##@ Sample Data
+
+register-publisher: ## Register the default 'timeplus' publisher
+	curl -X POST "http://localhost:8000/api/v1/register" \
+		-H "Content-Type: application/json" \
+		-d '{ \
+			"namespace": "timeplus", \
+			"display_name": "Timeplus", \
+			"email": "gang@timeplus.com", \
+			"password": "Password!" \
+		}'
+	@echo "\nPublisher 'timeplus' registered."
 
 register-samples: ## Register all sample connectors (user: timeplus, pass: Password!)
 	./scripts/register_samples.sh

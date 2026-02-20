@@ -1,40 +1,20 @@
 services:
-  # PostgreSQL database
-  postgres:
-    image: postgres:16-alpine
-    container_name: registry-postgres
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: registry
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # Registry API server
+  # Registry API server (uses embedded SQLite - no external DB required)
   api:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: registry-api
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/registry
+      DATABASE_URL: sqlite+aiosqlite:////app/data/registry.db
       SECRET_KEY: dev-secret-key-change-in-production
       DEBUG: "true"
     ports:
       - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    volumes:
+      - registry_data:/app/data
     command: >
       sh -c "
-        alembic upgrade head &&
         uvicorn registry.main:app --host 0.0.0.0 --port 8000
       "
 
@@ -103,6 +83,6 @@ services:
     command: start-notebook.sh --port=8888 --no-browser --allow-root --ip=0.0.0.0 --NotebookApp.token=''
 
 volumes:
-  postgres_data:
+  registry_data:
   timeplus_data:
   redpanda-data:

@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # Database
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/registry"
+    # Database (embedded SQLite by default - no external dependencies required)
+    database_url: str = "sqlite+aiosqlite:///./registry.db"
 
     # Security
     secret_key: str = "change-me-in-production-use-a-long-random-string"

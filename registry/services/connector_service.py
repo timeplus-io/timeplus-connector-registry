@@ -1,5 +1,6 @@
 """Connector service - business logic for connector operations."""
 
+import json
 import math
 from typing import Any, Optional
 from uuid import UUID
@@ -192,8 +193,10 @@ class ConnectorService:
 
         # Get authors from latest manifest
         authors = None
-        if latest_version and latest_version.manifest.get("metadata", {}).get("authors"):
-            authors = latest_version.manifest["metadata"]["authors"]
+        if latest_version:
+            mf = self._load_manifest(latest_version)
+            if mf.get("metadata", {}).get("authors"):
+                authors = mf["metadata"]["authors"]
 
         return ConnectorDetail(
             namespace=connector.publisher.namespace,
@@ -407,7 +410,7 @@ class ConnectorService:
             prerelease=prerelease,
             proton_version_min=spec.compatibility.protonVersion if spec.compatibility else None,
             python_version_min=spec.compatibility.pythonVersion if spec.compatibility else None,
-            manifest=manifest_to_dict(manifest),
+            manifest=json.dumps(manifest_to_dict(manifest)),
             python_code=spec.pythonCode,
             checksum_sha256=checksum,
         )
@@ -615,7 +618,7 @@ class ConnectorService:
 
     def _version_to_detail(self, version: ConnectorVersion) -> VersionDetail:
         """Convert version model to detail schema."""
-        manifest = version.manifest
+        manifest = self._load_manifest(version)
         spec = manifest.get("spec", {})
 
         # Build functions response
@@ -701,3 +704,11 @@ class ConnectorService:
             version = match.group(2) if match.group(2) else None
             return name, version
         return dep_str, None
+
+    @staticmethod
+    def _load_manifest(version: "ConnectorVersion") -> dict:
+        """Load manifest from the stored JSON string."""
+        if isinstance(version.manifest, str):
+            return json.loads(version.manifest)
+        # Fallback if already a dict (shouldn't happen with SQLite)
+        return version.manifest  # type: ignore
