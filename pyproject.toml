@@ -1,6 +1,6 @@
 [project]
 name = "timeplus-connector-registry"
-version = "0.1.0"
+version = "0.2.0"
 description = "Central registry for Timeplus Custom Table Function connectors"
 readme = "README.md"
 requires-python = ">=3.11"
