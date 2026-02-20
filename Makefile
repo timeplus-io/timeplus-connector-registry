@@ -5,6 +5,7 @@
         start stop restart build logs shell db-migrate db-shell \
         register-publisher register-samples \
         sqlite-shell \
+        docker-build docker-push docker-release \
         nats-sub nats-pub nats-js-sub nats-js-pub \
         nats-js-stream-create nats-js-stream-list nats-js-stream-info \
         nats-js-stream-delete nats-js-stream-pub nats-js-stream-sub
@@ -24,6 +25,10 @@ DB_PATH := ./data/registry.db
 NATS_HOST := host.docker.internal
 NATS_PORT := 4222
 NATS_JS_PORT := 4223
+
+# Docker Registry Configuration
+DOCKER_REPO := timeplus/connector-registry
+VERSION := $(shell grep "^version =" pyproject.toml | cut -d '"' -f 2)
 
 #------------------------------------------------------------------------------
 # Help
@@ -100,6 +105,19 @@ reset: ## Full reset: stop, clean volumes, rebuild and start fresh
 
 ps: ## Show running containers
 	$(COMPOSE) ps
+
+##@ Docker Release
+
+docker-build: ## Build Docker image with version and latest tags
+	@echo "$(BLUE)Building docker image $(DOCKER_REPO):$(VERSION)...$(NC)"
+	docker build -t $(DOCKER_REPO):$(VERSION) -t $(DOCKER_REPO):latest .
+
+docker-push: ## Push Docker image tags to Docker Hub
+	@echo "$(BLUE)Pushing docker image $(DOCKER_REPO):$(VERSION)...$(NC)"
+	docker push $(DOCKER_REPO):$(VERSION)
+	docker push $(DOCKER_REPO):latest
+
+docker-release: docker-build docker-push ## Build and push Docker image in one step
 
 ##@ Testing
 
