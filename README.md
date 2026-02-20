@@ -17,7 +17,7 @@ Central registry for Timeplus Custom Table Function (CTF) connectors. Think npm/
 The easiest way to run the registry locally:
 
 ```bash
-# Start PostgreSQL, API server, and UI
+# Start the registry API (UI is integrated)
 docker-compose up -d
 
 # View logs
@@ -31,47 +31,27 @@ docker-compose down -v
 ```
 
 Once running:
-- **UI**: http://localhost:3000
-- **API**: http://localhost:8000
+- **UI**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
+- **Health Check**: http://localhost:8000/health
 
 ### Option 2: Local Development
 
 If you prefer to run without Docker:
 
 ```bash
-# 1. Install PostgreSQL and create database
-createdb registry
-
-# 2. Install Python dependencies
+# 1. Install Python dependencies
 pip install -e .
 
-# 3. Set up environment variables (copy and edit .env.example)
+# 2. Set up environment variables (copy and edit .env.example)
 cp .env.example .env
-# Edit .env with your database credentials
+# By default, it uses an embedded SQLite database (registry.db)
 
-# 4. Run database migrations
-alembic upgrade head
-
-# 5. Start the server
+# 3. Start the server
 uvicorn registry.main:app --reload
 ```
 
-### Option 3: Docker Compose for Database Only
 
-Run PostgreSQL in Docker but the API locally (useful for development):
-
-```bash
-# Start only PostgreSQL
-docker-compose up -d postgres
-
-# Install dependencies and run locally
-pip install -e .
-export DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/registry"
-export SECRET_KEY="dev-secret-key"
-alembic upgrade head
-uvicorn registry.main:app --reload
-```
 
 ## API Documentation
 
@@ -186,7 +166,7 @@ registry/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/registry` | PostgreSQL connection string |
+| `DATABASE_URL` | `sqlite+aiosqlite:///./registry.db` | Database connection string |
 | `SECRET_KEY` | (required) | JWT signing key - use a long random string |
 | `DEBUG` | `false` | Enable debug mode |
 | `HOST` | `0.0.0.0` | Server bind host |

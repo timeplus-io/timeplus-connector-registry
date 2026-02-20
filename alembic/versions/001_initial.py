@@ -9,7 +9,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "001_initial"
@@ -87,7 +86,7 @@ def upgrade() -> None:
         sa.Column("prerelease", sa.String(64), nullable=True),
         sa.Column("proton_version_min", sa.String(32), nullable=True),
         sa.Column("python_version_min", sa.String(32), nullable=True),
-        sa.Column("manifest", postgresql.JSONB(), nullable=False),
+        sa.Column("manifest", sa.Text(), nullable=False),
         sa.Column("python_code", sa.Text(), nullable=False),
         sa.Column("checksum_sha256", sa.String(64), nullable=False),
         sa.Column("changelog", sa.Text(), nullable=True),

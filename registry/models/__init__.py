@@ -17,7 +17,6 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from registry.database import Base
@@ -44,8 +43,8 @@ class Publisher(Base):
 
     __tablename__ = "publishers"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     namespace: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -70,11 +69,11 @@ class Connector(Base):
 
     __tablename__ = "connectors"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    publisher_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("publishers.id", ondelete="CASCADE"), nullable=False
+    publisher_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("publishers.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -130,11 +129,11 @@ class ConnectorVersion(Base):
 
     __tablename__ = "connector_versions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    connector_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False
+    connector_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("connectors.id", ondelete="CASCADE"), nullable=False
     )
     version: Mapped[str] = mapped_column(String(32), nullable=False)
     version_major: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -147,7 +146,7 @@ class ConnectorVersion(Base):
     python_version_min: Mapped[Optional[str]] = mapped_column(String(32))
 
     # Content
-    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    manifest: Mapped[str] = mapped_column(Text, nullable=False)  # stored as JSON string
     python_code: Mapped[str] = mapped_column(Text, nullable=False)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
 
@@ -204,8 +203,8 @@ class ConnectorTag(Base):
 
     __tablename__ = "connector_tags"
 
-    connector_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    connector_id: Mapped[str] = mapped_column(
+        String(36),
         ForeignKey("connectors.id", ondelete="CASCADE"),
         primary_key=True,
     )
@@ -220,8 +219,8 @@ class ConnectorDependency(Base):
     __tablename__ = "connector_dependencies"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    version_id: Mapped[str] = mapped_column(
+        String(36),
         ForeignKey("connector_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -244,8 +243,8 @@ class ConnectorSchemaColumn(Base):
     __tablename__ = "connector_schema_columns"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    version_id: Mapped[str] = mapped_column(
+        String(36),
         ForeignKey("connector_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -271,8 +270,8 @@ class ConnectorFunction(Base):
     __tablename__ = "connector_functions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    version_id: Mapped[str] = mapped_column(
+        String(36),
         ForeignKey("connector_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -296,8 +295,8 @@ class ConnectorConfigTemplate(Base):
     __tablename__ = "connector_config_template"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    version_id: Mapped[str] = mapped_column(
+        String(36),
         ForeignKey("connector_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -321,9 +320,9 @@ class ConnectorStar(Base):
 
     __tablename__ = "connector_stars"
 
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    connector_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    connector_id: Mapped[str] = mapped_column(
+        String(36),
         ForeignKey("connectors.id", ondelete="CASCADE"),
         primary_key=True,
     )
@@ -341,13 +340,13 @@ class DownloadEvent(Base):
     __tablename__ = "download_events"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    connector_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("connectors.id"), nullable=False
+    connector_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("connectors.id"), nullable=False
     )
-    version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("connector_versions.id"), nullable=False
+    version_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("connector_versions.id"), nullable=False
     )
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    user_id: Mapped[Optional[str]] = mapped_column(String(36))
     proton_version: Mapped[Optional[str]] = mapped_column(String(32))
     downloaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
