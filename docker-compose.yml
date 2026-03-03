@@ -7,8 +7,10 @@ services:
     container_name: registry-api
     environment:
       DATABASE_URL: sqlite+aiosqlite:////app/data/registry.db
-      SECRET_KEY: dev-secret-key-change-in-production
-      DEBUG: "true"
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
+      DEBUG: ${DEBUG:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:8000","http://127.0.0.1:8000"]}
+      CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-false}
     ports:
       - "8000:8000"
     volumes:
@@ -70,6 +72,7 @@ services:
 
   # Jupyter Notebook service
   jupyter:
+    profiles: ["dev-tools"]
     image: jupyter/scipy-notebook:latest # Or jupyter/datascience-notebook, jupyter/base-notebook
     container_name: registry-jupyter
     ports:
@@ -78,9 +81,8 @@ services:
       - ./notebooks:/home/jovyan/work # Mount a local 'notebooks' directory
     environment:
       JUPYTER_ENABLE_LAB: "yes" # Enable JupyterLab
-      # Optional: Set a token or password for security
-      # JUPYTER_TOKEN: your-secure-token
-    command: start-notebook.sh --port=8888 --no-browser --allow-root --ip=0.0.0.0 --NotebookApp.token=''
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-change-me-jupyter-token}
+    command: start-notebook.sh --port=8888 --no-browser --allow-root --ip=0.0.0.0
 
 volumes:
   registry_data:
