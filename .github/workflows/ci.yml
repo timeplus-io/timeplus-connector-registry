@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-and-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Lint
+        run: python -m ruff check .
+
+      - name: Type check
+        run: python -m mypy registry
+
+  proton-docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: test-and-quality
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Start Proton docker service
+        env:
+          SECRET_KEY: ci-smoke-secret
+        run: docker compose up -d timeplus
+
+      - name: Run Proton smoke test
+        run: ./scripts/proton_smoke_test.sh
+
+      - name: Show Proton logs on failure
+        if: failure()
+        env:
+          SECRET_KEY: ci-smoke-secret
+        run: docker compose logs --tail=300 timeplus
+
+      - name: Stop Docker services
+        if: always()
+        env:
+          SECRET_KEY: ci-smoke-secret
+        run: docker compose down --remove-orphans

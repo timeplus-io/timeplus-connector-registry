@@ -3,9 +3,8 @@
 import json
 import math
 from typing import Any, Optional
-from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -23,13 +22,22 @@ from registry.models import (
     Tag,
 )
 from registry.schemas import (
+    CompatibilityResponse,
+    ConfigTemplateItemResponse,
     ConnectorCategory,
     ConnectorDetail,
     ConnectorListResponse,
     ConnectorManifest,
+    ConnectorMode,
     ConnectorSortField,
     ConnectorSummary,
+    DependencyResponse,
+    ExampleResponse,
+    FunctionDefResponse,
+    FunctionsResponse,
     Pagination,
+    SchemaColumnResponse,
+    SchemaResponse,
     SortOrder,
     VersionDetail,
     VersionListResponse,
@@ -136,7 +144,7 @@ class ConnectorService:
                     displayName=connector.display_name,
                     description=connector.description,
                     category=ConnectorCategory(connector.category),
-                    mode=connector.mode,
+                    mode=ConnectorMode(connector.mode),
                     latestVersion=latest_version.version if latest_version else "0.0.0",
                     tags=[tag.name for tag in connector.tags],
                     downloads=connector.downloads_total,
@@ -204,7 +212,7 @@ class ConnectorService:
             displayName=connector.display_name,
             description=connector.description,
             category=ConnectorCategory(connector.category),
-            mode=connector.mode,
+            mode=ConnectorMode(connector.mode),
             latestVersion=latest_version.version if latest_version else "0.0.0",
             tags=[tag.name for tag in connector.tags],
             downloads=connector.downloads_total,
@@ -249,6 +257,24 @@ class ConnectorService:
             return None
 
         return self._version_to_detail(version_obj)
+
+    async def get_version_manifest(
+        self, namespace: str, name: str, version: str
+    ) -> Optional[dict[str, Any]]:
+        """Load the original manifest for an exact connector version."""
+        stmt = (
+            select(ConnectorVersion)
+            .join(Connector)
+            .join(Publisher)
+            .where(Publisher.namespace == namespace)
+            .where(Connector.name == name)
+            .where(ConnectorVersion.version == version)
+        )
+        result = await self.db.execute(stmt)
+        version_obj = result.scalar_one_or_none()
+        if version_obj is None:
+            return None
+        return self._load_manifest(version_obj)
 
     async def get_latest_version(
         self, namespace: str, name: str, include_prerelease: bool = False
@@ -339,7 +365,9 @@ class ConnectorService:
         # Verify namespace matches publisher
         if metadata.namespace != publisher.namespace:
             raise ValueError(
-                f"Namespace '{metadata.namespace}' does not match authenticated publisher '{publisher.namespace}'"
+                "Namespace "
+                f"'{metadata.namespace}' does not match authenticated publisher "
+                f"'{publisher.namespace}'"
             )
 
         # Parse version
@@ -533,7 +561,7 @@ class ConnectorService:
 
         return True
 
-    async def star_connector(self, namespace: str, name: str, user_id: UUID) -> bool:
+    async def star_connector(self, namespace: str, name: str, user_id: str) -> bool:
         """Star a connector."""
         stmt = (
             select(Connector)
@@ -564,7 +592,7 @@ class ConnectorService:
 
         return True
 
-    async def unstar_connector(self, namespace: str, name: str, user_id: UUID) -> bool:
+    async def unstar_connector(self, namespace: str, name: str, user_id: str) -> bool:
         """Remove star from a connector."""
         stmt = (
             select(Connector)
@@ -621,13 +649,45 @@ class ConnectorService:
         manifest = self._load_manifest(version)
         spec = manifest.get("spec", {})
 
-        # Build functions response
-        functions_data = {}
-        for func in version.functions:
-            functions_data[func.function_type] = {
-                "name": func.function_name,
-                "description": func.description,
-            }
+        functions_map: dict[str, FunctionDefResponse] = {
+            item.function_type: FunctionDefResponse(
+                name=item.function_name,
+                description=item.description,
+            )
+            for item in version.functions
+        }
+        compatibility = CompatibilityResponse(
+            protonVersion=version.proton_version_min,
+            pythonVersion=version.python_version_min,
+        )
+        dependencies = [
+            DependencyResponse(name=dep.package_name, version=dep.version_spec)
+            for dep in version.dependencies
+        ]
+        schema = SchemaResponse(
+            columns=[
+                SchemaColumnResponse(
+                    name=column.column_name,
+                    type=column.column_type,
+                    nullable=column.nullable,
+                    description=column.description,
+                )
+                for column in sorted(version.schema_columns, key=lambda item: item.position)
+            ]
+        )
+        functions = FunctionsResponse(
+            read=functions_map.get("read"),
+            write=functions_map.get("write"),
+        )
+        config_template = [
+            ConfigTemplateItemResponse(
+                name=item.name,
+                description=item.description,
+                example=item.example,
+            )
+            for item in sorted(version.config_template, key=lambda value: value.position)
+        ]
+        examples = [ExampleResponse.model_validate(example) for example in spec.get("examples", [])]
 
         return VersionDetail(
             version=version.version,
@@ -637,35 +697,12 @@ class ConnectorService:
             changelog=version.changelog,
             yanked=version.yanked,
             yankReason=version.yank_reason,
-            compatibility={
-                "protonVersion": version.proton_version_min,
-                "pythonVersion": version.python_version_min,
-            },
-            dependencies=[
-                {"name": d.package_name, "version": d.version_spec}
-                for d in version.dependencies
-            ],
-            schema={
-                "columns": [
-                    {
-                        "name": c.column_name,
-                        "type": c.column_type,
-                        "nullable": c.nullable,
-                        "description": c.description,
-                    }
-                    for c in sorted(version.schema_columns, key=lambda x: x.position)
-                ]
-            },
-            functions=functions_data,
-            configTemplate=[
-                {
-                    "name": c.name,
-                    "description": c.description,
-                    "example": c.example,
-                }
-                for c in sorted(version.config_template, key=lambda x: x.position)
-            ],
-            examples=spec.get("examples", []),
+            compatibility=compatibility,
+            dependencies=dependencies,
+            schema=schema,
+            functions=functions,
+            configTemplate=config_template,
+            examples=examples,
             pythonCode=version.python_code,
         )
 
@@ -673,9 +710,7 @@ class ConnectorService:
         """Sync connector tags."""
         # Remove existing tags
         await self.db.execute(
-            ConnectorTag.__table__.delete().where(
-                ConnectorTag.connector_id == connector.id
-            )
+            delete(ConnectorTag).where(ConnectorTag.connector_id == connector.id)
         )
 
         # Add new tags
@@ -706,9 +741,14 @@ class ConnectorService:
         return dep_str, None
 
     @staticmethod
-    def _load_manifest(version: "ConnectorVersion") -> dict:
+    def _load_manifest(version: "ConnectorVersion") -> dict[str, Any]:
         """Load manifest from the stored JSON string."""
         if isinstance(version.manifest, str):
-            return json.loads(version.manifest)
+            loaded = json.loads(version.manifest)
+            if not isinstance(loaded, dict):
+                raise ValueError("Stored manifest must be a JSON object")
+            return loaded
         # Fallback if already a dict (shouldn't happen with SQLite)
-        return version.manifest  # type: ignore
+        if isinstance(version.manifest, dict):
+            return version.manifest
+        raise ValueError("Stored manifest has unsupported type")
