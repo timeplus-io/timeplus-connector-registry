@@ -1,0 +1,246 @@
+apiVersion: v1
+kind: Connector
+
+metadata:
+  name: sensor-update-datagen
+  namespace: timeplus
+  version: "1.0.0"
+  displayName: Sensor Update Data Generator (Kafka + Protobuf)
+  description: |
+    Generates simulated IoT sensor update data, writes each record to a Kafka topic
+    using Protobuf serialization with Schema Registry, and yields the same record
+    as a Timeplus streaming source. Keeps the original datagen.py logic intact:
+    SASL_SSL auth, confluent-kafka SerializingProducer, dynamic Protobuf descriptor,
+    and Schema Registry integration. All configuration is loaded from environment
+    variables via dotenv.
+  authors:
+    - name: Gang Tao
+      email: gang@timeplus.com
+  license: Apache-2.0
+
+spec:
+  category: source
+  mode: streaming
+
+  tags:
+    - datagen
+    - sensor
+    - iot
+    - kafka
+    - protobuf
+    - schema-registry
+    - real-time
+
+  compatibility:
+    protonVersion: ">=3.0.0"
+    pythonVersion: ">=3.9"
+
+  dependencies:
+    - confluent-kafka>=2.3.0
+    - protobuf>=4.25.0
+    - python-dotenv>=1.0.0
+
+  schema:
+    columns:
+      - name: id
+        type: string
+        nullable: false
+        description: Sensor identifier (e.g. sensor_42)
+      - name: value
+        type: float64
+        nullable: false
+        description: Simulated sensor reading between 0 and 100
+      - name: tags
+        type: string
+        nullable: false
+        description: JSON array of integer tags (e.g. [3, 7, 1])
+      - name: kafka_topic
+        type: string
+        nullable: false
+        description: The Kafka topic the record was produced to
+      - name: generated_at
+        type: datetime64(3)
+        nullable: false
+        description: Timestamp when the record was generated
+
+  functions:
+    read:
+      name: read_sensor_updates
+      description: |
+        Generates random sensor records, produces each to a Kafka topic via
+        Protobuf + Schema Registry, and yields the same record for Timeplus queries.
+
+  configTemplate:
+    - name: KAFKA_BOOTSTRAP_SERVERS
+      description: Kafka broker addresses
+      example: "pkc-xxxxx.us-east-1.aws.confluent.cloud:9092"
+    - name: KAFKA_USERNAME
+      description: SASL username for Kafka
+      example: "your-api-key"
+    - name: KAFKA_PASSWORD
+      description: SASL password for Kafka
+      example: "your-api-secret"
+    - name: SCHEMA_REGISTRY_URL
+      description: Schema Registry URL
+      example: "https://psrc-xxxxx.us-east-1.aws.confluent.cloud"
+    - name: SCHEMA_REGISTRY_USERNAME
+      description: Schema Registry basic auth username
+      example: "your-sr-api-key"
+    - name: SCHEMA_REGISTRY_PASSWORD
+      description: Schema Registry basic auth password
+      example: "your-sr-api-secret"
+
+  pythonCode: |
+    import os
+    import time
+    import random
+    import json
+    from datetime import datetime
+
+    from confluent_kafka import SerializingProducer
+    from confluent_kafka.schema_registry import SchemaRegistryClient
+    from confluent_kafka.schema_registry.protobuf import ProtobufSerializer
+
+    from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
+    from google.protobuf.message_factory import GetMessageClass
+
+    BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+    KAFKA_USERNAME = os.getenv("KAFKA_USERNAME")
+    KAFKA_PASSWORD = os.getenv("KAFKA_PASSWORD")
+
+    SCHEMA_REGISTRY_URL = os.getenv("SCHEMA_REGISTRY_URL")
+    SR_USERNAME = os.getenv("SCHEMA_REGISTRY_USERNAME")
+    SR_PASSWORD = os.getenv("SCHEMA_REGISTRY_PASSWORD")
+
+    TOPIC = "sensor-update"
+
+    # ---- Define proto schema inline ----
+    file_desc_proto = descriptor_pb2.FileDescriptorProto()
+    file_desc_proto.name = "sensor.proto"
+    file_desc_proto.syntax = "proto3"
+
+    msg = file_desc_proto.message_type.add()
+    msg.name = "SensorUpdate"
+
+    field1 = msg.field.add()
+    field1.name = "id"
+    field1.number = 1
+    field1.label = descriptor_pb2.FieldDescriptorProto.LABEL_OPTIONAL
+    field1.type = descriptor_pb2.FieldDescriptorProto.TYPE_STRING
+
+    field2 = msg.field.add()
+    field2.name = "value"
+    field2.number = 2
+    field2.label = descriptor_pb2.FieldDescriptorProto.LABEL_OPTIONAL
+    field2.type = descriptor_pb2.FieldDescriptorProto.TYPE_FLOAT
+
+    field3 = msg.field.add()
+    field3.name = "tags"
+    field3.number = 3
+    field3.label = descriptor_pb2.FieldDescriptorProto.LABEL_REPEATED
+    field3.type = descriptor_pb2.FieldDescriptorProto.TYPE_INT32
+
+    # ---- Build dynamic Protobuf class ----
+    pool = descriptor_pool.Default()
+    file_desc = pool.Add(file_desc_proto)
+    message_desc = file_desc.message_types_by_name["SensorUpdate"]
+    SensorUpdate = GetMessageClass(message_desc)
+
+    # ---- Schema Registry ----
+    schema_registry_conf = {
+        "url": SCHEMA_REGISTRY_URL,
+        "basic.auth.user.info": f"{SR_USERNAME}:{SR_PASSWORD}"
+    }
+    schema_registry_client = SchemaRegistryClient(schema_registry_conf)
+
+    protobuf_serializer = ProtobufSerializer(
+        SensorUpdate,
+        schema_registry_client,
+        {"use.deprecated.format": False}
+    )
+
+    # ---- Kafka Producer (SASL/SSL) ----
+    producer_conf = {
+        "bootstrap.servers": BOOTSTRAP_SERVERS,
+        "security.protocol": "SASL_SSL",
+        "sasl.mechanism": "PLAIN",
+        "sasl.username": KAFKA_USERNAME,
+        "sasl.password": KAFKA_PASSWORD,
+        "value.serializer": protobuf_serializer
+    }
+
+    def read_sensor_updates():
+        producer = SerializingProducer(producer_conf)
+
+        def delivery_report(err, msg):
+            if err:
+                print(f"Delivery failed: {err}")
+            else:
+                print(f"Sent to {msg.topic()} [{msg.partition()}]")
+
+        try:
+            while True:
+                sensor_id = f"sensor_{random.randint(1, 100)}"
+                sensor_value = random.uniform(0, 100)
+                tag_list = [random.randint(1, 10) for _ in range(3)]
+                now = datetime.utcnow()
+
+                # Build Protobuf record and produce to Kafka
+                record = SensorUpdate(
+                    id=sensor_id,
+                    value=sensor_value,
+                    tags=tag_list
+                )
+
+                producer.produce(
+                    topic=TOPIC,
+                    value=record,
+                    on_delivery=delivery_report
+                )
+                producer.poll(0)
+
+                # Yield the same record to Timeplus
+                yield (
+                    sensor_id,
+                    float(sensor_value),
+                    json.dumps(tag_list),
+                    TOPIC,
+                    now,
+                )
+
+                time.sleep(1)
+        finally:
+            producer.flush()
+
+  examples:
+    - title: Stream All Generated Sensor Updates
+      description: Read all sensor records as they are generated and produced to Kafka.
+      code: |
+        SELECT * FROM sensor_update_datagen;
+
+    - title: Monitor Generation Rate
+      description: Count records generated per 5-second window.
+      code: |
+        SELECT
+          window_start,
+          count(*) AS records_generated
+        FROM tumble(sensor_update_datagen, generated_at, 5s)
+        GROUP BY window_start;
+
+    - title: Average Sensor Value per Window
+      description: Compute tumbling-window averages across all sensors.
+      code: |
+        SELECT
+          window_start,
+          avg(value) AS avg_value,
+          min(value) AS min_value,
+          max(value) AS max_value
+        FROM tumble(sensor_update_datagen, generated_at, 5s)
+        GROUP BY window_start;
+
+    - title: Filter by Sensor ID
+      description: Monitor a specific sensor in real time.
+      code: |
+        SELECT id, value, tags, generated_at
+        FROM sensor_update_datagen
+        WHERE id = 'sensor_42';
