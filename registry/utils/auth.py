@@ -1,8 +1,7 @@
 """Authentication and authorization utilities."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
-from uuid import UUID
+from typing import Any, Optional
 
 import bcrypt
 from fastapi import Depends, HTTPException, status
@@ -37,7 +36,9 @@ def get_password_hash(password: str) -> str:
     return hashed.decode('utf-8')
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    data: dict[str, Any], expires_delta: Optional[timedelta] = None
+) -> str:
     """Create a JWT access token."""
     to_encode = data.copy()
     if expires_delta:
@@ -48,7 +49,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         )
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
-    return encoded_jwt
+    return str(encoded_jwt)
 
 
 def decode_token(token: str) -> Optional[TokenData]:

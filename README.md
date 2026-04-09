@@ -10,6 +10,22 @@ Central registry for Timeplus Custom Table Function (CTF) connectors. Think npm/
 - 🏷️ **Categorization** - Source, Sink, and Bidirectional connectors
 - ✅ **Verification** - Verified publisher badges for trusted connectors
 
+## Python Version Compatibility
+
+This repository and Proton runtime can have different Python version requirements:
+
+| Component | Python Version |
+|----------|----------------|
+| Connector Registry service (this repo) | `>=3.11` |
+| Proton Python connector runtime (current) | `3.10` |
+
+What this means:
+- Run the registry service with Python 3.11+.
+- If Proton runs in Docker, host Python version does not matter for connector execution.
+- If Proton runs on bare metal, ensure the host Python runtime matches Proton requirements.
+- Write connector code and dependency constraints compatible with Proton's runtime Python (currently 3.10).
+- In connector manifests, set `spec.compatibility.pythonVersion` explicitly (for example: `">=3.10,<3.11"`).
+
 ## Quick Start
 
 ### Option 1: Docker Compose (Recommended)
@@ -17,17 +33,24 @@ Central registry for Timeplus Custom Table Function (CTF) connectors. Think npm/
 The easiest way to run the registry locally:
 
 ```bash
+# 0. Set required secrets
+cp .env.example .env
+# Edit .env and set a strong SECRET_KEY before starting
+
 # Start the registry API (UI is integrated)
-docker-compose up -d
+docker compose up -d
 
 # View logs
-docker-compose logs -f api
+docker compose logs -f api
 
 # Stop services
-docker-compose down
+docker compose down
 
 # Stop and remove data
-docker-compose down -v
+docker compose down -v
+
+# Optional: start Jupyter helper service
+docker compose --profile dev-tools up -d jupyter
 ```
 
 Once running:
@@ -41,7 +64,7 @@ If you prefer to run without Docker:
 
 ```bash
 # 1. Install Python dependencies
-pip install -e .
+python -m pip install -e .
 
 # 2. Set up environment variables (copy and edit .env.example)
 cp .env.example .env
@@ -49,6 +72,21 @@ cp .env.example .env
 
 # 3. Start the server
 uvicorn registry.main:app --reload
+```
+
+### Proton Docker Smoke Test (SQL Generator Validation)
+
+This verifies generated connector SQL can be executed by a real Proton engine:
+
+```bash
+# Start Proton only (SECRET_KEY is required by compose interpolation)
+SECRET_KEY=local-smoke docker compose up -d timeplus
+
+# Run the smoke test (generate SQL -> CREATE EXTERNAL STREAM -> SELECT -> DROP)
+./scripts/proton_smoke_test.sh
+
+# Tear down
+SECRET_KEY=local-smoke docker compose down --remove-orphans
 ```
 
 
@@ -100,7 +138,7 @@ curl -X POST "http://localhost:8000/api/v1/login" \
 curl -X POST "http://localhost:8000/api/v1/connectors" \
   -H "Authorization: Bearer <your-token>" \
   -H "Content-Type: application/x-yaml" \
-  --data-binary @samples/kafka-json-reader.yaml
+  --data-binary @samples/kafka-string-connector.yaml
 ```
 
 ### Search Connectors
@@ -171,6 +209,10 @@ registry/
 | `DEBUG` | `false` | Enable debug mode |
 | `HOST` | `0.0.0.0` | Server bind host |
 | `PORT` | `8000` | Server bind port |
+| `CORS_ORIGINS` | `["http://localhost:8000","http://127.0.0.1:8000"]` | Allowed CORS origins |
+| `CORS_ALLOW_CREDENTIALS` | `false` | Whether CORS credentials are allowed |
+| `RATE_LIMIT_WINDOW_SECONDS` | `3600` | Rate limiting window size in seconds |
+| `RATE_LIMIT_USE_FORWARDED_FOR` | `false` | Use `X-Forwarded-For`/`X-Real-IP` for anonymous rate-limit keys (enable only behind trusted proxy) |
 
 ## License
 

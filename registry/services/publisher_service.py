@@ -2,11 +2,11 @@
 
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from registry.models import Connector, Publisher
+from registry.models import Publisher
 from registry.schemas import PublisherDetailResponse, PublisherResponse
 from registry.utils import get_password_hash
 

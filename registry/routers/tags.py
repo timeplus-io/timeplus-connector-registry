@@ -13,7 +13,7 @@ router = APIRouter(tags=["Tags & Categories"])
 @router.get("/tags", response_model=list[TagResponse])
 async def list_tags(
     db: AsyncSession = Depends(get_db),
-):
+) -> list[TagResponse]:
     """List all tags with connector counts."""
     service = TagService(db)
     return await service.list_tags()
@@ -23,7 +23,7 @@ async def list_tags(
 async def get_connectors_by_tag(
     tag: str,
     db: AsyncSession = Depends(get_db),
-):
+) -> ConnectorListResponse:
     """Get all connectors with a specific tag."""
     connector_service = ConnectorService(db)
     return await connector_service.list_connectors(tags=[tag])
@@ -32,7 +32,7 @@ async def get_connectors_by_tag(
 @router.get("/categories", response_model=CategoryStats)
 async def get_category_stats(
     db: AsyncSession = Depends(get_db),
-):
+) -> CategoryStats:
     """Get connector counts by category."""
     service = TagService(db)
     return await service.get_category_stats()

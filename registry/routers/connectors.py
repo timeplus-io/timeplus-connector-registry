@@ -1,7 +1,6 @@
 """Connector API routes."""
 
 from typing import Optional
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse
@@ -14,7 +13,6 @@ from registry.schemas import (
     ConnectorCategory,
     ConnectorDetail,
     ConnectorListResponse,
-    ConnectorManifest,
     ConnectorSortField,
     ErrorResponse,
     PublishResponse,
@@ -27,7 +25,6 @@ from registry.services import ConnectorService
 from registry.utils import (
     ManifestError,
     generate_install_sql,
-    get_current_publisher,
     get_required_publisher,
     parse_manifest,
 )
@@ -55,7 +52,7 @@ async def list_connectors(
         description="Items per page",
     ),
     db: AsyncSession = Depends(get_db),
-):
+) -> ConnectorListResponse:
     """
     List and search connectors.
 
@@ -82,7 +79,7 @@ async def get_connector(
     namespace: str,
     name: str,
     db: AsyncSession = Depends(get_db),
-):
+) -> ConnectorDetail:
     """Get detailed information about a connector."""
     service = ConnectorService(db)
     connector = await service.get_connector(namespace, name)
@@ -101,7 +98,7 @@ async def list_versions(
     namespace: str,
     name: str,
     db: AsyncSession = Depends(get_db),
-):
+) -> VersionListResponse:
     """List all versions of a connector."""
     service = ConnectorService(db)
     versions = await service.list_versions(namespace, name)
@@ -121,7 +118,7 @@ async def get_latest_version(
     name: str,
     include_prerelease: bool = Query(False, description="Include prerelease versions"),
     db: AsyncSession = Depends(get_db),
-):
+) -> VersionDetail:
     """Get the latest version of a connector."""
     service = ConnectorService(db)
     version = await service.get_latest_version(namespace, name, include_prerelease)
@@ -141,7 +138,7 @@ async def get_version(
     name: str,
     version: str,
     db: AsyncSession = Depends(get_db),
-):
+) -> VersionDetail:
     """Get specific version details."""
     service = ConnectorService(db)
     version_detail = await service.get_version(namespace, name, version)
@@ -171,7 +168,7 @@ async def get_install_sql(
     version: Optional[str] = Query(None, description="Specific version (defaults to latest)"),
     stream_name: Optional[str] = Query(None, alias="name", description="Custom stream name"),
     db: AsyncSession = Depends(get_db),
-):
+) -> PlainTextResponse:
     """
     Get installation SQL for a connector.
 
@@ -190,49 +187,26 @@ async def get_install_sql(
             detail=f"Connector '{namespace}/{name}' not found",
         )
 
-    # Get the full manifest from version
-    stmt_version = await service.get_version(namespace, name, version_detail.version)
-    
-    # Reconstruct manifest for SQL generation
-    manifest = {
-        "metadata": {
-            "namespace": namespace,
-            "name": name,
-            "version": version_detail.version,
-        },
-        "spec": {
-            "category": version_detail.functions.read and version_detail.functions.write
-                and "bidirectional"
-                or (version_detail.functions.write and "sink" or "source"),
-            "mode": "streaming",  # Default
-            "dependencies": [
-                f"{d.name}{d.version or ''}" for d in version_detail.dependencies
-            ] if hasattr(version_detail, 'dependencies') else [
-                f"{d['name']}{d.get('version', '')}" for d in version_detail.dependencies
-            ],
-            "schema": {
-                "columns": [
-                    {
-                        "name": col.name,
-                        "type": col.type,
-                        "nullable": col.nullable,
-                        "description": col.description
-                    }
-                    for col in (version_detail.schema_ if hasattr(version_detail, 'schema_') else version_detail.schema).columns
-                ]
-            },
-            "functions": {
-                "read": {"name": version_detail.functions.read.name, "description": version_detail.functions.read.description} if version_detail.functions.read else None,
-                "write": {"name": version_detail.functions.write.name, "description": version_detail.functions.write.description} if version_detail.functions.write else None,
-            },
-            "pythonCode": version_detail.pythonCode,
-        },
-    }
+    manifest = await service.get_version_manifest(namespace, name, version_detail.version)
+    if manifest is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Version '{version_detail.version}' not found for connector "
+                f"'{namespace}/{name}'"
+            ),
+        )
 
-    # Record download
+    try:
+        sql = generate_install_sql(manifest, stream_name)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    # Record download only for successful SQL generation.
     await service.record_download(namespace, name, version_detail.version)
-
-    sql = generate_install_sql(manifest, stream_name)
     return PlainTextResponse(content=sql, media_type="text/plain")
 
 
@@ -251,7 +225,7 @@ async def get_python_code(
     name: str,
     version: Optional[str] = Query(None, description="Specific version"),
     db: AsyncSession = Depends(get_db),
-):
+) -> PlainTextResponse:
     """Get the Python code for a connector."""
     service = ConnectorService(db)
 
@@ -283,7 +257,7 @@ async def publish_connector(
     request: Request,
     publisher: Publisher = Depends(get_required_publisher),
     db: AsyncSession = Depends(get_db),
-):
+) -> PublishResponse:
     """
     Publish a new connector or version.
 
@@ -341,7 +315,7 @@ async def yank_version(
     yank_request: Optional[YankRequest] = None,
     publisher: Publisher = Depends(get_required_publisher),
     db: AsyncSession = Depends(get_db),
-):
+) -> dict[str, str]:
     """
     Yank a version (soft delete).
 
@@ -372,7 +346,7 @@ async def star_connector(
     name: str,
     publisher: Publisher = Depends(get_required_publisher),
     db: AsyncSession = Depends(get_db),
-):
+) -> dict[str, str]:
     """Star a connector."""
     service = ConnectorService(db)
     success = await service.star_connector(namespace, name, publisher.id)
@@ -392,7 +366,7 @@ async def unstar_connector(
     name: str,
     publisher: Publisher = Depends(get_required_publisher),
     db: AsyncSession = Depends(get_db),
-):
+) -> dict[str, str]:
     """Remove star from a connector."""
     service = ConnectorService(db)
     success = await service.unstar_connector(namespace, name, publisher.id)

@@ -3,10 +3,8 @@
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-
 
 # ============ Enums ============
 
@@ -69,7 +67,12 @@ class Author(BaseModel):
 class SchemaColumn(BaseModel):
     """Column definition for connector schema."""
 
-    name: str = Field(..., min_length=1, max_length=128)
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
     type: str = Field(..., min_length=1, max_length=64)
     nullable: bool = True
     description: Optional[str] = None
@@ -90,7 +93,12 @@ class SchemaColumnResponse(BaseSchema):
 class FunctionDef(BaseModel):
     """Function definition for read/write operations."""
 
-    name: str = Field(..., min_length=1, max_length=128)
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
     description: Optional[str] = None
 
 
@@ -211,8 +219,18 @@ class SchemaResponse(BaseSchema):
 class ConnectorMetadata(BaseModel):
     """Connector metadata from manifest."""
 
-    name: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
-    namespace: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+    )
+    namespace: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+    )
     version: str = Field(..., pattern=r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$")
     displayName: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
@@ -276,7 +294,12 @@ class TagResponse(BaseSchema):
 class PublisherCreate(BaseModel):
     """Publisher registration request."""
 
-    namespace: str = Field(..., min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
+    namespace: str = Field(
+        ...,
+        min_length=2,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+    )
     display_name: str = Field(..., min_length=1, max_length=255)
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)

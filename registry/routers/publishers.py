@@ -35,7 +35,7 @@ settings = get_settings()
 async def register_publisher(
     publisher_data: PublisherCreate,
     db: AsyncSession = Depends(get_db),
-):
+) -> Token:
     """
     Register a new publisher account.
 
@@ -80,7 +80,7 @@ async def register_publisher(
 async def login(
     login_request: LoginRequest,
     db: AsyncSession = Depends(get_db),
-):
+) -> Token:
     """
     Login to get an access token.
     """
@@ -107,17 +107,23 @@ async def login(
 async def get_current_user(
     publisher: Publisher = Depends(get_required_publisher),
     db: AsyncSession = Depends(get_db),
-):
+) -> PublisherResponse:
     """Get current authenticated publisher information."""
     service = PublisherService(db)
-    return await service.get_publisher(publisher.namespace)
+    current = await service.get_publisher(publisher.namespace)
+    if current is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Publisher '{publisher.namespace}' not found",
+        )
+    return current
 
 
 @router.get("/publishers/{namespace}", response_model=PublisherResponse)
 async def get_publisher(
     namespace: str,
     db: AsyncSession = Depends(get_db),
-):
+) -> PublisherResponse:
     """Get publisher information by namespace."""
     service = PublisherService(db)
     publisher = await service.get_publisher(namespace)
@@ -135,7 +141,7 @@ async def get_publisher(
 async def get_publisher_connectors(
     namespace: str,
     db: AsyncSession = Depends(get_db),
-):
+) -> ConnectorListResponse:
     """List all connectors by a publisher."""
     connector_service = ConnectorService(db)
     return await connector_service.list_connectors(namespace=namespace)
